@@ -1,0 +1,9 @@
+torchattacks
+git+https://github.com/fra31/auto-attack
+imagecorruptions
+scikit-learn
+pandas
+matplotlib
+pyyaml
+tqdm
+pytest

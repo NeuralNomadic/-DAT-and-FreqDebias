@@ -1,0 +1,4 @@
+exp: E3_base              # §5.4 Base-AT control: L = L_AT(x) with EAEG (§4.5) [paper: DAT, Table 4 baseline]
+method: base_at
+dual_bn: false
+select_metric: pgd20

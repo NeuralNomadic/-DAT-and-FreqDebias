@@ -1,0 +1,4 @@
+exp: E0_standard          # §5.1 Standard training (also the frozen OHEM model for Fo-Mixup, §6.3)
+method: standard
+dual_bn: false
+select_metric: clean      # §4.4: no adversarial training -> select on validation clean accuracy

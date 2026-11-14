@@ -1,0 +1,8 @@
+exp: E6_dat               # §5.7 DAT (Arm B) [paper: DAT, Alg. 2; details from the official code]
+method: dat
+dual_bn: true
+select_metric: pgd20
+generator: learned        # AAG generator (src/aag.py) with its own SGD
+gen_lr: 0.1               # [paper: DAT]
+js_weight: 2.0            # omega = 2 [paper: DAT]
+dat_post_crop: true       # official code applies a random crop (+flip, not used here) after the amplitude mix

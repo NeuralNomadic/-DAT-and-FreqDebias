@@ -1,0 +1,5 @@
+exp: E1_pgdat             # §5.2 PGD-AT [paper: Madry]
+method: pgd_at
+dual_bn: false
+select_metric: pgd20
+pgd_steps: 10

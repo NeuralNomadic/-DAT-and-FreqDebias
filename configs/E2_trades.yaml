@@ -1,0 +1,6 @@
+exp: E2_trades            # §5.3 TRADES [paper: TRADES]
+method: trades
+dual_bn: false
+select_metric: pgd20
+pgd_steps: 10
+trades_beta: 6.0

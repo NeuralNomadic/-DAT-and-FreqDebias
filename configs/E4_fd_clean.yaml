@@ -1,0 +1,12 @@
+exp: E4_fd_clean          # §5.5 FreqDebias-Clean: E5 without attacks (tests H2)
+method: fd
+dual_bn: true
+adversarial: false
+select_metric: clean      # §4.4
+band_mode: ohem           # B from the image's 3 stored OHEM clusters (§6.3-6.4)
+delta: 0.1                # [paper: FreqDebias Eq. 13]
+tau: 4.0                  # [paper: FreqDebias Eq. 3]
+consistency_weight: 1.0
+confidence_sampling: true
+confidence_keep: 0.5      # lambda = 0.5 [paper: FreqDebias]
+p_std: 0.1                # [adaptation] Eq. 2 noise N(1, 0.1^2)

@@ -1,0 +1,12 @@
+exp: A4                   # §5.8 E5 without confidence sampling
+method: fd
+dual_bn: true
+adversarial: true
+select_metric: pgd20
+band_mode: ohem
+delta: 0.1
+tau: 4.0
+consistency_weight: 1.0
+confidence_sampling: false
+confidence_keep: 1.0
+p_std: 0.1

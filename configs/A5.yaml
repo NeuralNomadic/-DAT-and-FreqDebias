@@ -1,0 +1,8 @@
+exp: A5                   # §5.8 E6 with a single BN (no A/B split)
+method: dat
+dual_bn: false
+select_metric: pgd20
+generator: learned
+gen_lr: 0.1
+js_weight: 2.0
+dat_post_crop: true

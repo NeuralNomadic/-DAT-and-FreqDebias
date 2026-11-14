@@ -1,0 +1,20 @@
+# Shared settings for EVERY experiment (CLAUDE.md §4). Never change these for one method only (§13).
+# Tags: [paper: X] taken from paper X; [adaptation] project choice (justify in NOTES.md).
+num_classes: 43
+epochs: 60                 # [adaptation] (switch to 100 with milestones [75, 90] for ALL runs if §4.3 says so)
+milestones: [40, 50]       # LR x0.1
+lr: 0.1                    # [paper: DAT]
+momentum: 0.9              # [paper: DAT]
+weight_decay: 0.0005       # [paper: DAT]
+batch_size: 128            # [adaptation]
+amp: true                  # fp16 autocast + GradScaler for training; FFT/attacks/eval always float32
+eval_every: 2              # validation PGD-20 every 2 epochs (§4.4)
+eps: 8                     # /255  [paper: DAT; Madry]
+alpha: 2                   # /255  [paper: DAT; Madry]
+# shared adversarial-training base (§4.5) used by E3, E5, E6 and their ablations
+eaeg_steps: 5              # K  [paper: DAT, Alg. 1]
+beta: 15.0                 # [paper: DAT]
+label_smoothing: 0.5       # [paper: DAT official code, args.alpha] used in every CE of the shared base (EAEG attack, L_AT, E4 CE); student decision 2026-11-14, NOTES.md N4
+# Madry / TRADES inner maximisation
+pgd_steps: 10              # [paper: Madry; TRADES]
+trades_beta: 6.0           # [paper: TRADES]

@@ -1,0 +1,7 @@
+exp: A6                   # §5.8 E6 with A_G replaced by the amplitude of a random same-class image (no generator)
+method: dat
+dual_bn: true
+select_metric: pgd20
+generator: partner
+js_weight: 2.0
+dat_post_crop: true

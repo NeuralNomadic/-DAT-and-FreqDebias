@@ -1,0 +1,12 @@
+exp: A3                   # §5.8 E5 with delta = 0 (no CAM consistency)
+method: fd
+dual_bn: true
+adversarial: true
+select_metric: pgd20
+band_mode: ohem
+delta: 0.0
+tau: 4.0
+consistency_weight: 1.0
+confidence_sampling: true
+confidence_keep: 0.5
+p_std: 0.1
