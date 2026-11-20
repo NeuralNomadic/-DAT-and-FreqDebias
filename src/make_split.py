@@ -46,15 +46,18 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=2)
     args = ap.parse_args(argv)
 
+    from .storage import get_syncer
+    syncer = get_syncer(args.out)
     split_dir = os.path.join(args.out, "split")
     os.makedirs(split_dir, exist_ok=True)
 
+    # the official 39,209-image training set (count is checked inside build_cache / list_split)
     cache = build_cache(args.data, "train", cache_path_for(args.out, "train"), args.workers)
     items = list(zip(cache["relpaths"], cache["labels"].tolist()))
-    assert len(items) == 39209, f"expected 39,209 official training images, found {len(items)}"
+    print(f"training images: {len(items)} (official GTSRB final training set)")
 
     tr_path, va_path = os.path.join(split_dir, "train.txt"), os.path.join(split_dir, "val.txt")
     if os.path.exists(tr_path) and os.path.exists(va_path):
@@ -64,10 +67,14 @@ def main(argv=None):
         train, val = split_by_track(items)
         write_split_file(train, tr_path)
         write_split_file(val, va_path)
+    if len(train) + len(val) != len(items):
+        raise RuntimeError(f"split files cover {len(train) + len(val)} images but the dataset has {len(items)}: "
+                           f"they were made from a different copy of GTSRB. Delete {split_dir} and re-run.")
     # track IDs restart per class, so uniqueness is checked per (class, track)
     tr_ct = {(l, track_id(r)) for r, l in train}
     va_ct = {(l, track_id(r)) for r, l in val}
-    assert not (tr_ct & va_ct), "a (class, track) appears in both splits"
+    if tr_ct & va_ct:
+        raise RuntimeError("a (class, track) appears in both splits")
     print(f"train {len(train)} images / {len(tr_ct)} tracks; val {len(val)} images / {len(va_ct)} tracks")
 
     tr_imgs, _ = subset_from_split(cache, train)
@@ -82,7 +89,8 @@ def main(argv=None):
         json.dump({str(i): CLASS_NAMES[i] for i in range(NUM_CLASSES)}, f, indent=2)
 
     test_cache = build_cache(args.data, "test", cache_path_for(args.out, "test"), args.workers)
-    assert len(test_cache["labels"]) == 12630, "expected 12,630 official test images"
+    print(f"test images: {len(test_cache['labels'])}")
+    syncer.push_now()
     print("done:", split_dir)
 
 

@@ -2,9 +2,10 @@
 test image, then resized to 32x32. Deterministic (seed = 1000 * corruption_index + severity). Cached as uint8
 .npy under OUT/data_cache/gtsrb_c/ (regenerated if absent).
 
-Primary implementation: the `imagecorruptions` package. If it is missing or fails on an image, the fallback
-implementations below (ImageNet-C formulas) are used and the event is logged to OUT/data_cache/gtsrb_c/fallbacks.txt
-so it can be recorded in NOTES.md.
+The six corruptions are implemented here directly with the ImageNet-C formulas and severity constants of
+Hendrycks & Dietterich (ICLR 2019) as packaged in `imagecorruptions` 1.1.2. The package itself is not used: it
+calls skimage.filters.gaussian(multichannel=True), removed in scikit-image 0.19, imports pkg_resources, and
+pulls in opencv-python, which conflicts with Colab's preinstalled OpenCV (NOTES.md N13).
 """
 import argparse
 import io
@@ -12,27 +13,27 @@ import os
 
 import numpy as np
 import torch
-from PIL import Image, ImageFilter
+from PIL import Image
+from scipy.ndimage import gaussian_filter
 
-from .data import get_gtsrb, resize32, synthetic_cache
+from .data import list_split, resize32, synthetic_cache
 
-# (metrics.json key, imagecorruptions name)
+# (metrics.json key, ImageNet-C name)
 CORRUPTIONS = [("gaussian_noise", "gaussian_noise"), ("gaussian_blur", "gaussian_blur"),
                ("brightness", "brightness"), ("contrast", "contrast"), ("fog", "fog"), ("jpeg", "jpeg_compression")]
 SEVERITIES = [1, 2, 3, 4, 5]
-MIN_SIDE = 32  # images smaller than this are upsampled before corrupting (see NOTES.md)
-
-try:
-    from imagecorruptions import corrupt as _ic_corrupt
-except Exception:  # pragma: no cover
-    _ic_corrupt = None
 
 
 # ----------------------------------------------------------------------------------------------
-# Fallbacks (ImageNet-C parameterisation)
+# ImageNet-C corruptions (constants identical to imagecorruptions 1.1.2)
 # ----------------------------------------------------------------------------------------------
-def _plasma_fractal(mapsize=256, wibbledecay=3.0, rng=np.random):
-    """Diamond-square plasma fractal in [0,1] (fog texture), after Hendrycks & Dietterich's ImageNet-C code."""
+def _next_power_of_2(x):
+    return 1 if x == 0 else 2 ** (int(x) - 1).bit_length()
+
+
+def plasma_fractal(mapsize, wibbledecay, rng):
+    """Diamond-square plasma fractal in [0,1] (fog texture), as in the ImageNet-C code. mapsize: power of 2."""
+    assert mapsize & (mapsize - 1) == 0
     maparray = np.empty((mapsize, mapsize), dtype=np.float64)
     maparray[0, 0] = 0
     stepsize = mapsize
@@ -48,14 +49,17 @@ def _plasma_fractal(mapsize=256, wibbledecay=3.0, rng=np.random):
         maparray[stepsize // 2:mapsize:stepsize, stepsize // 2:mapsize:stepsize] = wibbledmean(squareaccum)
 
     def filldiamonds():
-        drgrid = maparray[stepsize // 2:mapsize:stepsize, stepsize // 2:mapsize:stepsize]
-        ulgrid = maparray[0:mapsize:stepsize, 0:mapsize:stepsize]
+        mapsize_ = maparray.shape[0]
+        drgrid = maparray[stepsize // 2:mapsize_:stepsize, stepsize // 2:mapsize_:stepsize]
+        ulgrid = maparray[0:mapsize_:stepsize, 0:mapsize_:stepsize]
         ldrsum = drgrid + np.roll(drgrid, 1, axis=0)
         lulsum = ulgrid + np.roll(ulgrid, -1, axis=1)
-        maparray[0:mapsize:stepsize, stepsize // 2:mapsize:stepsize] = wibbledmean(ldrsum + lulsum)
+        ltsum = ldrsum + lulsum
+        maparray[0:mapsize_:stepsize, stepsize // 2:mapsize_:stepsize] = wibbledmean(ltsum)
         tdrsum = drgrid + np.roll(drgrid, 1, axis=1)
         tulsum = ulgrid + np.roll(ulgrid, -1, axis=0)
-        maparray[stepsize // 2:mapsize:stepsize, 0:mapsize:stepsize] = wibbledmean(tdrsum + tulsum)
+        ttsum = tdrsum + tulsum
+        maparray[stepsize // 2:mapsize_:stepsize, 0:mapsize_:stepsize] = wibbledmean(ttsum)
 
     while stepsize >= 2:
         fillsquares()
@@ -66,59 +70,62 @@ def _plasma_fractal(mapsize=256, wibbledecay=3.0, rng=np.random):
     return maparray / maparray.max()
 
 
-def _fallback(img, name, severity):
-    x = img.astype(np.float32) / 255.0
-    s = severity - 1
-    if name == "gaussian_noise":
-        c = [.08, .12, 0.18, 0.26, 0.38][s]
-        x = x + np.random.normal(size=x.shape, scale=c)
-    elif name == "gaussian_blur":
-        c = [1, 2, 3, 4, 6][s]
-        x = np.asarray(Image.fromarray(img).filter(ImageFilter.GaussianBlur(radius=c)), dtype=np.float32) / 255.0
-    elif name == "brightness":
-        from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
-        c = [.1, .2, .3, .4, .5][s]
-        hsv = rgb_to_hsv(x)
-        hsv[..., 2] = np.clip(hsv[..., 2] + c, 0, 1)
-        x = hsv_to_rgb(hsv)
-    elif name == "contrast":
-        c = [0.4, .3, .2, .1, .05][s]
-        means = x.mean(axis=(0, 1), keepdims=True)
-        x = (x - means) * c + means
-    elif name == "fog":
-        c = [(1.5, 2), (2., 2), (2.5, 1.7), (2.5, 1.5), (3., 1.4)][s]
-        h, w = x.shape[:2]
-        size = 256
-        while size < max(h, w):
-            size *= 2
-        mx = x.max()
-        x = x + c[0] * _plasma_fractal(mapsize=size, wibbledecay=c[1])[:h, :w][..., None]
-        x = x * mx / (mx + c[0])
-    elif name == "jpeg_compression":
-        c = [25, 18, 15, 10, 7][s]
-        buf = io.BytesIO()
-        Image.fromarray(img).save(buf, "JPEG", quality=c)
-        x = np.asarray(Image.open(buf).convert("RGB"), dtype=np.float32) / 255.0
-    else:
-        raise ValueError(name)
-    return (np.clip(x, 0, 1) * 255).astype(np.uint8)
+def gaussian_noise(x, s, rng):
+    c = [.08, .12, 0.18, 0.26, 0.38][s - 1]
+    x = np.asarray(x, dtype=np.float64) / 255.
+    return np.clip(x + rng.normal(size=x.shape, scale=c), 0, 1) * 255
 
 
-def corrupt_image(img_hwc_uint8, ic_name, severity, log=None):
-    img = img_hwc_uint8
-    h, w = img.shape[:2]
-    if min(h, w) < MIN_SIDE:                      # upsample tiny signs so every corruption is well defined
-        scale = MIN_SIDE / min(h, w)
-        img = np.asarray(Image.fromarray(img).resize((max(MIN_SIDE, round(w * scale)),
-                                                      max(MIN_SIDE, round(h * scale))), Image.BILINEAR))
-    if _ic_corrupt is not None:
-        try:
-            out = _ic_corrupt(img, corruption_name=ic_name, severity=severity)
-            return np.asarray(out, dtype=np.uint8)
-        except Exception as e:  # pragma: no cover
-            if log is not None:
-                log.append(f"{ic_name} s{severity}: imagecorruptions failed ({e!r}); used fallback")
-    return _fallback(img, ic_name, severity)
+def gaussian_blur(x, s, rng):
+    """skimage.filters.gaussian(x, sigma=c, multichannel=True) == per-channel ndimage filter, mode='nearest'."""
+    c = [1, 2, 3, 4, 6][s - 1]
+    x = np.asarray(x, dtype=np.float64) / 255.
+    x = gaussian_filter(x, sigma=(c, c, 0), mode="nearest", truncate=4.0)
+    return np.clip(x, 0, 1) * 255
+
+
+def brightness(x, s, rng):
+    from matplotlib.colors import hsv_to_rgb, rgb_to_hsv   # same formulas as skimage.color.rgb2hsv / hsv2rgb
+    c = [.1, .2, .3, .4, .5][s - 1]
+    x = np.asarray(x, dtype=np.float64) / 255.
+    hsv = rgb_to_hsv(x)
+    hsv[..., 2] = np.clip(hsv[..., 2] + c, 0, 1)
+    return np.clip(hsv_to_rgb(hsv), 0, 1) * 255
+
+
+def contrast(x, s, rng):
+    c = [0.4, .3, .2, .1, .05][s - 1]
+    x = np.asarray(x, dtype=np.float64) / 255.
+    means = np.mean(x, axis=(0, 1), keepdims=True)
+    return np.clip((x - means) * c + means, 0, 1) * 255
+
+
+def fog(x, s, rng):
+    c = [(1.5, 2), (2., 2), (2.5, 1.7), (2.5, 1.5), (3., 1.4)][s - 1]
+    shape = np.asarray(x).shape
+    map_size = _next_power_of_2(int(max(shape[:2])))
+    x = np.asarray(x, dtype=np.float64) / 255.
+    max_val = x.max()
+    x = x + c[0] * plasma_fractal(map_size, c[1], rng)[:shape[0], :shape[1]][..., np.newaxis]
+    return np.clip(x * max_val / (max_val + c[0]), 0, 1) * 255
+
+
+def jpeg_compression(x, s, rng):
+    c = [25, 18, 15, 10, 7][s - 1]
+    buf = io.BytesIO()
+    Image.fromarray(np.asarray(x, dtype=np.uint8)).save(buf, "JPEG", quality=c)
+    buf.seek(0)
+    with Image.open(buf) as im:
+        return np.asarray(im.convert("RGB"), dtype=np.float64)
+
+
+_FUNCS = {"gaussian_noise": gaussian_noise, "gaussian_blur": gaussian_blur, "brightness": brightness,
+          "contrast": contrast, "fog": fog, "jpeg_compression": jpeg_compression}
+
+
+def corrupt_image(img_hwc_uint8, name, severity, rng):
+    """Corrupt one original-resolution HxWx3 uint8 image; returns uint8 (truncation, as imagecorruptions)."""
+    return np.uint8(_FUNCS[name](img_hwc_uint8, severity, rng))
 
 
 def to_32(img_hwc_uint8):
@@ -137,41 +144,51 @@ def cache_file(out, key, sev):
     return os.path.join(cache_dir(out), f"{key}_s{sev}.npy")
 
 
-def load_test_originals(data_root, n=None):
-    ds = get_gtsrb(data_root, "test", download=True)
-    imgs, labels = [], []
-    for path, lab in ds._samples[:n]:
+def all_cache_files(out):
+    return [cache_file(out, k, s) for k, _ in CORRUPTIONS for s in SEVERITIES] + \
+        [os.path.join(cache_dir(out), "labels.npy")]
+
+
+def load_test_originals(data_root):
+    """All 12,630 official test images at their original resolution (downloaded if needed), in GT order."""
+    items = list_split(data_root, "test", download=True)
+    imgs = []
+    for _, _, path in items:
         with Image.open(path) as im:
             imgs.append(np.asarray(im.convert("RGB")))
-        labels.append(int(lab))
-    return imgs, np.asarray(labels)
+    return imgs, np.asarray([lab for _, lab, _ in items])
 
 
-def build(data_root, out, n=None, originals=None, verbose=True):
-    """Create every missing cache file. Returns labels (np array)."""
+def _valid(path, n_expected):
+    if not os.path.exists(path):
+        return False
+    return n_expected is None or np.load(path, mmap_mode="r").shape[0] == n_expected
+
+
+def build(data_root, out, originals=None, verbose=True, n_expected=None):
+    """Create every missing (or wrongly sized) cache file. Returns labels (np array)."""
     os.makedirs(cache_dir(out), exist_ok=True)
+    labels_path = os.path.join(cache_dir(out), "labels.npy")
+    todo = [(ci, key, name, sev) for ci, (key, name) in enumerate(CORRUPTIONS) for sev in SEVERITIES
+            if not _valid(cache_file(out, key, sev), n_expected)]
+    if not todo and _valid(labels_path, n_expected):
+        return np.load(labels_path)
     if originals is None:
-        originals, labels = load_test_originals(data_root, n)
+        originals, labels = load_test_originals(data_root)
     else:
         originals, labels = originals
-    log = []
-    for ci, (key, ic_name) in enumerate(CORRUPTIONS):
-        for sev in SEVERITIES:
-            path = cache_file(out, key, sev)
-            if os.path.exists(path) and np.load(path, mmap_mode="r").shape[0] == len(originals):
-                continue
-            np.random.seed(1000 * ci + sev)                             # §3.3 determinism
-            arr = np.stack([to_32(corrupt_image(im, ic_name, sev, log)).numpy() for im in originals])
-            tmp = path + ".tmp.npy"
-            np.save(tmp, arr.astype(np.uint8))
-            os.replace(tmp, path)
-            if verbose:
-                print(f"built {key} severity {sev}: {arr.shape}", flush=True)
-    if log:
-        with open(os.path.join(cache_dir(out), "fallbacks.txt"), "a") as f:
-            f.write("\n".join(sorted(set(log))) + "\n")
-    np.save(os.path.join(cache_dir(out), "labels.npy"), labels)
-    return labels
+    for ci, key, name, sev in todo:
+        rng = np.random.RandomState(1000 * ci + sev)                    # §3.3 determinism
+        t0 = __import__("time").time()
+        arr = np.stack([to_32(corrupt_image(im, name, sev, rng)).numpy() for im in originals])
+        path = cache_file(out, key, sev)
+        tmp = path + ".tmp.npy"
+        np.save(tmp, arr.astype(np.uint8))
+        os.replace(tmp, path)
+        if verbose:
+            print(f"built {key} severity {sev}: {arr.shape} ({__import__('time').time() - t0:.0f}s)", flush=True)
+    np.save(labels_path, np.asarray(labels))
+    return np.asarray(labels)
 
 
 def load_corrupted(out, key, sev):

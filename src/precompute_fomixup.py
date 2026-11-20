@@ -20,10 +20,12 @@ from .data import gtsrb_present, load_stats, load_train_val, synthetic_train_val
 from .fomixup import K_CLUSTERS, T_KEEP, band_filtered_image, band_mask, cluster_segments
 from .fourier import fft2_shift
 from .models import build_model
+from .storage import get_syncer, rel_to_out
 
 
 def load_ohem_model(out, mean, std, device, smoke=False):
     path = os.path.join(out, "runs", "E0_standard", "seed0", "checkpoints", "best.pt")
+    get_syncer(out).ensure(rel_to_out(out, path))   # fetch from storage in a new session
     if not os.path.exists(path):
         if smoke:
             print("smoke: E0 best.pt not found, using a randomly initialised OHEM model")
@@ -73,13 +75,21 @@ def main(argv=None):
         train_ds, _ = load_train_val(args.data, args.out)
         mean, std = load_stats(args.out)
     model = load_ohem_model(args.out, mean, std, device, smoke=args.smoke)
-    seg_cluster, top = compute_masks(model, train_ds.imgs, train_ds.labels, device)
+    n = len(train_ds)
+    n_real = min(n, 64) if args.smoke else n       # smoke: real OHEM masks for 64 images, random for the rest
+    seg_cluster, top = compute_masks(model, train_ds.imgs[:n_real], train_ds.labels[:n_real], device)
+    if n_real < n:
+        from .fourier import fft2_shift
+        A, _ = fft2_shift(train_ds.imgs[n_real:].float() / 255.0)
+        seg_cluster = torch.cat([seg_cluster, cluster_segments(A).cpu()])
+        top = torch.cat([top, torch.stack([torch.randperm(K_CLUSTERS)[:T_KEEP] for _ in range(n - n_real)])])
     path = os.path.join(args.out, "data_cache", "fomixup_masks.pt")
-    atomic_save({"seg_cluster": seg_cluster, "top_clusters": top, "n": len(train_ds),
+    atomic_save({"seg_cluster": seg_cluster, "top_clusters": top, "n": n, "smoke": bool(args.smoke),
                  "k": K_CLUSTERS, "t": T_KEEP, "ohem_model": "E0_standard/seed0/best.pt"}, path)
     print("saved", path, seg_cluster.shape, top.shape)
     from .make_grids import fomixup_grid
     fomixup_grid(args.out, train_ds, {"seg_cluster": seg_cluster, "top_clusters": top}, device)
+    get_syncer(args.out).push_now()
 
 
 if __name__ == "__main__":

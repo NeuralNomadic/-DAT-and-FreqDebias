@@ -15,6 +15,7 @@ import torch
 from . import corruptions as corr
 from .attacks import fgsm, patch_attack, pgd
 from .common import env_info, fp32_ctx, get_device, read_json, run_dir, set_seed, write_json
+from .storage import get_syncer, rel_to_out
 from .data import (CLASS_NAMES, NUM_CLASSES, SAFETY_CLASSES, gtsrb_present, load_stats, load_test, synthetic_test)
 from .metrics import accuracy, correct_flags, dataset_tensors
 from .models import build_model
@@ -38,7 +39,12 @@ class Evaluator:
         self.device = get_device(force_cpu=args.cpu or args.smoke)
         set_seed(0)
 
+        self.syncer = get_syncer(args.out)
         ck_path = os.path.join(self.rd, "checkpoints", "best.pt")
+        for name in ("best.pt", "last.pt"):        # new Colab session: fetch checkpoints from storage
+            self.syncer.ensure(rel_to_out(args.out, os.path.join(self.rd, "checkpoints", name)))
+        if not os.path.exists(ck_path):
+            raise FileNotFoundError(f"{ck_path} not found locally or in storage: train {args.exp} seed {args.seed} first")
         ck = torch.load(ck_path, map_location="cpu", weights_only=False)
         self.cfg = ck["cfg"]
         if args.smoke and not gtsrb_present(args.data):
@@ -78,7 +84,11 @@ class Evaluator:
     # ------------------------------------------------------------------------------------------
     def save(self):
         write_json(self.m, self.metrics_path)
-        torch.save(self.flags, self.flags_path)
+        tmp = self.flags_path + ".tmp"
+        torch.save(self.flags, tmp)
+        os.replace(tmp, self.flags_path)
+        if hasattr(self, "syncer"):
+            self.syncer.maybe_push()
 
     def have(self, key):
         return key in self.m and self.m[key] is not None
@@ -176,22 +186,28 @@ class Evaluator:
         if self.have("corruptions") and len(self.m["corruptions"]) == 6 and all(len(v) == 5 for v in self.m["corruptions"].values()):
             return
         n = len(self.Y)
+        # smoke runs keep their tiny synthetic corruption cache apart from the real one
+        corr_out = os.path.join(self.args.out, ".smoke") if self.args.smoke else self.args.out
+        self.corr_out = corr_out
         if self.args.smoke:
             c = corr.synthetic_cache(n, seed=1)
-            labels = corr.build(self.args.data, self.args.out,
+            labels = corr.build(self.args.data, corr_out, n_expected=n,
                                 originals=([im.permute(1, 2, 0).numpy() for im in c["imgs"]], c["labels"].numpy()),
                                 verbose=False)
         else:
-            labels = corr.build(self.args.data, self.args.out)
+            for p in corr.all_cache_files(corr_out):    # reuse arrays built in an earlier session
+                self.syncer.ensure(rel_to_out(self.args.out, p))
+            labels = corr.build(self.args.data, corr_out, n_expected=n)
             if not os.path.exists(os.path.join(self.args.out, "figures", "corruptions", "fog.png")):
                 corr.make_figures(self.args.out)
+            self.syncer.push_now()
         Y = torch.from_numpy(labels).long()
         res = self.m.get("corruptions", {}) or {}
         rows = []
         for key, _ in corr.CORRUPTIONS:
             accs = []
             for sev in corr.SEVERITIES:
-                Xc = corr.load_corrupted(self.args.out, key, sev).float() / 255.0
+                Xc = corr.load_corrupted(self.corr_out, key, sev).float() / 255.0
                 f = self.flags_for(f"corr_{key}_s{sev}", None, Xc, Y)
                 accs.append(r2(accuracy(f)))
                 rows.append({"corruption": key, "severity": sev, "acc": accs[-1]})
@@ -323,6 +339,7 @@ class Evaluator:
         self.autoattack()
         self.cost()
         self.sanity()
+        self.syncer.push_now()
         print(f"metrics written to {self.metrics_path}")
 
 

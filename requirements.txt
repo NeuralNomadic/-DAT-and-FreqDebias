@@ -1,9 +1,15 @@
-torchattacks
-git+https://github.com/fra31/auto-attack
-imagecorruptions
+# Local (non-Colab) environment. Use the torch/torchvision you already have.
+# Removed (they broke Colab, see NOTES.md N13/N19): torchattacks (pins requests~=2.25.1, never used),
+# imagecorruptions (needs opencv-python and scikit-image APIs removed in 0.19; corruptions are implemented
+# in src/corruptions.py instead).
+autoattack @ git+https://github.com/fra31/auto-attack@a39220048b3c9f2cca9a4d3a54604793c68eca7e
+numpy
+scipy
 scikit-learn
 pandas
 matplotlib
 pyyaml
 tqdm
+pillow
+huggingface_hub
 pytest

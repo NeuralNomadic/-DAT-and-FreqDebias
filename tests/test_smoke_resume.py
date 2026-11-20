@@ -71,5 +71,7 @@ def test_evaluate_precompute_grids_aggregate_smoke(tmp_out, tmp_data):
     assert os.path.exists(os.path.join(tmp_out, "figures", "dat_grid.png"))
     aggregate.main(["--out", tmp_out])
     assert os.path.exists(os.path.join(tmp_out, "results", "table_main.md"))
-    corruptions.make_figures(tmp_out)
+    corruptions.make_figures(os.path.join(tmp_out, ".smoke"))   # smoke corruption cache lives apart
+    assert not os.path.exists(os.path.join(tmp_out, "data_cache", "gtsrb_c")), "smoke must not touch the real cache"
+    tmp_out = os.path.join(tmp_out, ".smoke")
     assert os.path.exists(os.path.join(tmp_out, "figures", "corruptions", "fog.png"))

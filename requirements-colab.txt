@@ -1,0 +1,5 @@
+# Extras for Google Colab. Everything else (torch, torchvision, numpy, scipy, scikit-learn, pandas, matplotlib,
+# pyyaml, tqdm, pytest, huggingface_hub) is preinstalled on Colab and must NOT be reinstalled or pinned.
+# Install with:  pip install --no-deps -r requirements-colab.txt
+# (--no-deps: AutoAttack only needs torch/numpy, which Colab already has, so nothing preinstalled is touched)
+autoattack @ git+https://github.com/fra31/auto-attack@a39220048b3c9f2cca9a4d3a54604793c68eca7e

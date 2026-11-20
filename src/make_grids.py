@@ -10,6 +10,7 @@ from .data import gtsrb_present, load_stats, load_train_val, synthetic_train_val
 from .fomixup import band_mask, fomixup
 from .fourier import fft2_dat, ifft2_dat
 from .models import build_model
+from .storage import get_syncer, rel_to_out
 
 
 def _save_grid(rows, col_titles, path, title):
@@ -111,6 +112,7 @@ def main(argv=None):
         G = None
         for name in ("E6_dat",):
             ck = os.path.join(args.out, "runs", name, "seed0", "checkpoints", "last.pt")
+            get_syncer(args.out).ensure(rel_to_out(args.out, ck))
             if os.path.exists(ck):
                 st = torch.load(ck, map_location="cpu", weights_only=False)
                 model.load_state_dict(st["model"])
@@ -119,6 +121,7 @@ def main(argv=None):
                     G.load_state_dict(st["method_extra"]["generator"])
                 print("using E6 checkpoint", ck)
         dat_grid(args.out, ds, model, device, G)
+    get_syncer(args.out).push_now()
 
 
 if __name__ == "__main__":

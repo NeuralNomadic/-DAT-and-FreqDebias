@@ -22,6 +22,7 @@ from .data import gtsrb_present, load_stats, load_train_val, synthetic_train_val
 from .metrics import accuracy, correct_flags, dataset_tensors
 from .methods import build_method, method_needs_partner
 from .models import build_model
+from .storage import get_syncer, rel_to_out
 
 LOG_COLUMNS = ["epoch", "lr", "train_loss", "train_clean_acc", "val_clean_acc", "val_pgd20_acc",
                "sec_per_epoch", "is_best"]
@@ -46,7 +47,14 @@ def parse_args(argv):
 def load_fomixup_masks(out, smoke, train_ds, device):
     path = os.path.join(out, "data_cache", "fomixup_masks.pt")
     if os.path.exists(path):
-        return torch.load(path, map_location="cpu", weights_only=False)
+        masks = torch.load(path, map_location="cpu", weights_only=False)
+        if not smoke and masks.get("smoke"):
+            raise RuntimeError(f"{path} was produced by a --smoke run; re-run `python -m src.precompute_fomixup` "
+                               f"without --smoke before training E4/E5/A1-A4")
+        if len(masks["seg_cluster"]) != len(train_ds):
+            raise RuntimeError(f"{path} has masks for {len(masks['seg_cluster'])} images but the training split has "
+                               f"{len(train_ds)}; re-run src.precompute_fomixup")
+        return masks
     if not smoke:
         raise FileNotFoundError(f"{path} missing: run `python -m src.precompute_fomixup` after E0 (CLAUDE.md §9)")
     # smoke without the real masks: cluster the segments of the training images, pick random bands
@@ -111,6 +119,15 @@ def main(argv=None):
         torch.backends.cudnn.benchmark = False
 
     set_seed(args.seed)
+    syncer = get_syncer(args.out)
+    done_path = os.path.join(run_dir(args.out, cfg["exp"], args.seed), "DONE")
+    if args.resume and not smoke and os.path.exists(done_path):
+        done = open(done_path).read().strip()
+        if done.split()[:2] == ["epochs", str(cfg["epochs"])]:
+            print(f"training already complete ({done}); nothing to do")
+            syncer.push_now()
+            return os.path.dirname(done_path)
+        print(f"DONE marker is for a different schedule ({done}); continuing to {cfg['epochs']} epochs")
     device = get_device(force_cpu=args.cpu or smoke)
     amp = bool(cfg.get("amp", True)) and device.type == "cuda"
 
@@ -146,6 +163,8 @@ def main(argv=None):
     start_epoch, best_metric, best_epoch, train_hours = 0, float("-inf"), -1, 0.0
     rows = []
     last_path, best_path = os.path.join(ck_dir, "last.pt"), os.path.join(ck_dir, "best.pt")
+    if args.resume:
+        syncer.ensure(rel_to_out(args.out, last_path))     # new Colab session: fetch the checkpoint from storage
     if args.resume and os.path.exists(last_path):
         ck = torch.load(last_path, map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
@@ -221,9 +240,12 @@ def main(argv=None):
         print(f"[{cfg['exp']} s{args.seed}] epoch {epoch + 1}/{epochs} lr {lr_now:.4f} loss {row['train_loss']:.4f} "
               f"train_acc {row['train_clean_acc']:.2f} val_clean {val_clean:.2f}{pgd_str} "
               f"{'*' if is_best else ''} ({sec:.0f}s)", flush=True)
+        syncer.maybe_push()                                # throttled background upload (OUT_SYNC_INTERVAL)
 
     with open(os.path.join(rd, "DONE"), "w") as f:
-        f.write(f"best_epoch {best_epoch} best_{select} {best_metric:.4f} train_hours {train_hours:.3f}\n")
+        f.write(f"epochs {epochs} best_epoch {best_epoch} best_{select} {best_metric:.4f} "
+                f"train_hours {train_hours:.3f}\n")
+    syncer.push_now(squash=True)
     return rd
 
 

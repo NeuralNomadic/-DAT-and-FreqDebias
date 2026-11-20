@@ -30,23 +30,66 @@ SAFETY_CLASSES = [14, 13, 17, 0, 1, 2, 3, 4, 5, 7, 8]
 # ----------------------------------------------------------------------------------------------
 # Raw dataset access
 # ----------------------------------------------------------------------------------------------
-def get_gtsrb(root: str, split: str, download: bool = True):
-    import torchvision
-    return torchvision.datasets.GTSRB(root=root, split=split, download=download)
+# The official GTSRB archives (same server torchvision uses). torchvision.datasets.GTSRB downloads
+# GTSRB-Training_fixed.zip, the 26,640-image *competition* training set; CLAUDE.md §3 requires the official
+# 39,209-image final training set, so the archives are downloaded here directly (NOTES.md N18).
+GTSRB_URL = "https://sid.erda.dk/public/archives/daaeac0d7ce1152aea9b61d9f1e19370/"
+ARCHIVES = {
+    "train": [("GTSRB_Final_Training_Images.zip", "f33fd80ac59bff73c82d25ab499e03a3")],
+    "test": [("GTSRB_Final_Test_Images.zip", "c7e4e6327067d32654124b0fe9e82185"),
+             ("GTSRB_Final_Test_GT.zip", "fe31e9c9270bbcd7b84b7f21a9d9d9e5")],
+}
+EXPECTED_COUNT = {"train": 39209, "test": 12630}
+
+
+def split_dir(root: str, split: str) -> str:
+    return os.path.join(root, "GTSRB", "Final_Training" if split == "train" else "Final_Test", "Images")
+
+
+def test_gt_csv(root: str) -> str:
+    return os.path.join(root, "GT-final_test.csv")
 
 
 def gtsrb_present(root: str) -> bool:
-    return os.path.isdir(os.path.join(root, "gtsrb", "GTSRB"))
+    return os.path.isdir(split_dir(root, "train")) and os.path.isdir(split_dir(root, "test")) \
+        and os.path.isfile(test_gt_csv(root))
 
 
-def samples_with_relpaths(ds) -> List[Tuple[str, int]]:
-    """(relative path, label) for every sample; relative to the split folder, e.g. 00014/00003_00021.ppm."""
-    base = str(ds._target_folder)
-    out = []
-    for path, label in ds._samples:
-        rel = os.path.relpath(str(path), base).replace(os.sep, "/")
-        out.append((rel, int(label)))
-    return out
+def download_gtsrb(root: str, split: str):
+    """Download + extract the official archives for `split` into `root` (skipped when already present)."""
+    from torchvision.datasets.utils import download_and_extract_archive
+    ready = os.path.isdir(split_dir(root, split)) and (split == "train" or os.path.isfile(test_gt_csv(root)))
+    if ready:
+        return
+    os.makedirs(root, exist_ok=True)
+    for name, md5 in ARCHIVES[split]:
+        download_and_extract_archive(GTSRB_URL + name, download_root=root, md5=md5, remove_finished=True)
+
+
+def list_split(root: str, split: str, download: bool = True) -> List[Tuple[str, int, str]]:
+    """(relpath, label, full path) for every image of the official split, in a fixed order.
+    train: relpath = 'CCCCC/TTTTT_IIIII.ppm' (class folder / track_image), sorted.
+    test:  relpath = 'NNNNN.ppm', in GT-final_test.csv order."""
+    if download:
+        download_gtsrb(root, split)
+    base = split_dir(root, split)
+    if not os.path.isdir(base):
+        raise FileNotFoundError(f"GTSRB {split} images not found at {base}. Run with download enabled, or check "
+                                f"--data (it must be the folder that contains 'GTSRB/').")
+    items = []
+    if split == "train":
+        for cls in sorted(d for d in os.listdir(base) if d.isdigit()):
+            for fn in sorted(f for f in os.listdir(os.path.join(base, cls)) if f.endswith(".ppm")):
+                items.append((f"{cls}/{fn}", int(cls), os.path.join(base, cls, fn)))
+    else:
+        import csv
+        with open(test_gt_csv(root), newline="") as f:
+            for row in csv.DictReader(f, delimiter=";"):
+                items.append((row["Filename"], int(row["ClassId"]), os.path.join(base, row["Filename"])))
+    if len(items) != EXPECTED_COUNT[split]:
+        raise RuntimeError(f"GTSRB {split}: found {len(items)} images in {base}, expected {EXPECTED_COUNT[split]}. "
+                           f"Delete {os.path.join(root, 'GTSRB')} and re-run to download the official archive again.")
+    return items
 
 
 def track_id(relpath: str) -> int:
@@ -79,20 +122,33 @@ class _DecodeDataset(Dataset):
         return resize32(load_image_uint8(self.paths[i]))
 
 
-def build_cache(root: str, split: str, cache_path: str, workers: int = 4) -> dict:
-    """Decode every image of a split once, resize to 32x32, store uint8 tensor + labels + relpaths."""
+CACHE_VERSION = 2   # v1 caches were built from torchvision's 26,640-image archive and are rejected
+
+
+def _cache_ok(cache, split):
+    return (isinstance(cache, dict) and cache.get("version") == CACHE_VERSION
+            and len(cache.get("labels", [])) == EXPECTED_COUNT[split])
+
+
+def build_cache(root: str, split: str, cache_path: str, workers: int = 2) -> dict:
+    """Decode every image of a split once, resize to 32x32, store uint8 tensor + labels + relpaths.
+    An existing cache is reused only if it has the expected version and image count; otherwise it is rebuilt.
+    The raw images are needed (and downloaded) only when the cache has to be built."""
     if os.path.exists(cache_path):
-        return torch.load(cache_path, weights_only=False)
-    ds = get_gtsrb(root, split, download=True)
-    items = samples_with_relpaths(ds)
-    base = str(ds._target_folder)
-    paths = [os.path.join(base, rel) for rel, _ in items]
-    loader = DataLoader(_DecodeDataset(paths), batch_size=256, num_workers=workers, shuffle=False)
+        cache = torch.load(cache_path, weights_only=False)
+        if _cache_ok(cache, split):
+            return cache
+        print(f"cache {cache_path} is stale (version/count mismatch); rebuilding from the official archive")
+    items = list_split(root, split, download=True)
+    loader = DataLoader(_DecodeDataset([p for _, _, p in items]), batch_size=256, num_workers=workers,
+                        shuffle=False)
     imgs = torch.cat([b for b in loader], 0).contiguous()
-    cache = {"imgs": imgs, "labels": torch.tensor([l for _, l in items], dtype=torch.long),
-             "relpaths": [r for r, _ in items]}
+    cache = {"imgs": imgs, "labels": torch.tensor([l for _, l, _ in items], dtype=torch.long),
+             "relpaths": [r for r, _, _ in items], "version": CACHE_VERSION, "split": split}
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    torch.save(cache, cache_path)
+    tmp = cache_path + ".tmp"
+    torch.save(cache, tmp)
+    os.replace(tmp, cache_path)
     return cache
 
 
@@ -179,14 +235,23 @@ class GTSRB32(Dataset):
 
 def subset_from_split(cache: dict, items: List[Tuple[str, int]]):
     pos = {r: i for i, r in enumerate(cache["relpaths"])}
+    missing = [r for r, _ in items if r not in pos]
+    if missing:
+        raise RuntimeError(f"{len(missing)} split-file entries (e.g. {missing[0]}) are not in the image cache: the "
+                           f"split was made from a different copy of GTSRB. Delete OUT/split/ and re-run make_split.")
     idx = torch.tensor([pos[r] for r, _ in items], dtype=torch.long)
     labels = torch.tensor([l for _, l in items], dtype=torch.long)
-    assert torch.equal(labels, cache["labels"][idx]), "split file labels disagree with the dataset"
+    if not torch.equal(labels, cache["labels"][idx]):
+        raise RuntimeError("split file labels disagree with the image cache; delete OUT/split/ and re-run make_split")
     return cache["imgs"][idx].contiguous(), labels
 
 
 def load_train_val(data_root: str, out: str, with_partner: bool = False):
     """Datasets for the saved split (OUT/split/train.txt, val.txt). Never recomputes the split (§3.1)."""
+    for name in ("train.txt", "val.txt", "stats.json"):
+        if not os.path.exists(os.path.join(out, "split", name)):
+            raise FileNotFoundError(f"{os.path.join(out, 'split', name)} is missing: run "
+                                    f"`python -m src.make_split --data DATA --out OUT` first (notebook data cell)")
     cache = build_cache(data_root, "train", cache_path_for(out, "train"))
     tr_items = read_split_file(os.path.join(out, "split", "train.txt"))
     va_items = read_split_file(os.path.join(out, "split", "val.txt"))

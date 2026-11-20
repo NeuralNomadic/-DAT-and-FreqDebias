@@ -225,6 +225,8 @@ def main(argv=None):
     table_ablation(rows, res)
     figures(rows, args.out, res)
     print(f"aggregated {len(rows)} runs ->", res)
+    from .storage import get_syncer
+    get_syncer(args.out).push_now()
     tm = os.path.join(res, "table_main.md")
     if os.path.exists(tm):
         print(open(tm, encoding="utf-8").read())
