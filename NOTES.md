@@ -87,12 +87,18 @@ paper-vs-code difference resolved in favour of the official code, §5.7).
   §7.1). The overall AutoAttack accuracy is the fraction of images robust to **all four** — the same quantity
   the sequential 'standard' run reports. Each attack's result is check-pointed (`eval_flags.pt`).
 
-## N13. Corruptions
-* `imagecorruptions` is applied to the original-resolution test image; images with a side < 32 px are first
-  upsampled (bilinear) so that min side = 32, because several corruptions assume at least 32 px. Any image on
-  which the package fails falls back to the ImageNet-C formula implemented in `src/corruptions.py`; such events
-  are appended to `OUT/data_cache/gtsrb_c/fallbacks.txt` and must be copied here.
-* Cache size: 30 uint8 arrays × 12,630 × 3 × 32 × 32 ≈ 1.1 GB on Drive (regenerated if absent).
+## N13. Corruptions implemented directly (the `imagecorruptions` package is broken on current Colab)
+* `imagecorruptions` 1.1.2 (last release) calls `skimage.filters.gaussian(..., multichannel=True)`, removed in
+  scikit-image 0.19, imports `pkg_resources`, and depends on `opencv-python`, which conflicts with Colab's
+  preinstalled OpenCV. CLAUDE.md §3.3 allows implementing the corruptions directly when the package fails.
+* `src/corruptions.py` implements the six corruptions with the package's formulas and severity constants
+  (Hendrycks & Dietterich, ICLR 2019). Gaussian blur uses `scipy.ndimage.gaussian_filter` with
+  `mode='nearest', truncate=4`, which is what `skimage.filters.gaussian` computes per channel; brightness uses
+  matplotlib's RGB↔HSV, the same formulas as `skimage.color`.
+* Corruptions are applied to the original-resolution test image (no upsampling of small images any more), then
+  resized to 32×32. Randomness: one `np.random.RandomState(1000·corruption_index + severity)` per array.
+* Cache: 30 uint8 arrays × 12,630 × 3 × 32 × 32 ≈ 1.1 GB, synced to storage and fetched on demand.
+* Smoke runs keep their tiny synthetic cache under `OUT/.smoke/`, and a cache of the wrong size is rebuilt.
 
 ## N14. Patch attack details [adaptation]
 * The patch is initialised at the image's own pixels (so the attack can only lower accuracy from clean), then
@@ -115,3 +121,32 @@ paper-vs-code difference resolved in favour of the official code, §5.7).
   (generator weights became NaN in one step while gradients were still ~1e-3). All KL/JS terms are therefore
   computed as `sum_c p_c (log p_c − log q_c)` with `log p = log_softmax(logits)`, which has the same value and a
   finite gradient; the KL direction, reduction and JS mixture clamp (1e-7) of the DAT code are unchanged.
+
+## N18. Dataset archive: official 39,209-image training set, not torchvision's archive
+* `torchvision.datasets.GTSRB` downloads `GTSRB-Training_fixed.zip`, which holds **26,640** training images
+  (the online-competition training set). CLAUDE.md §3 requires the official **39,209**-image final training set,
+  which is why the v1 notebook stopped with an `AssertionError` in `make_split`.
+* `src/data.py` now downloads the official archives from the same server torchvision uses
+  (`GTSRB_Final_Training_Images.zip`, `GTSRB_Final_Test_Images.zip`, `GTSRB_Final_Test_GT.zip`), checks their
+  MD5 sums and the image counts (39,209 / 12,630), and fails with an explanation otherwise. Checked on
+  2026-11-20 by downloading all archives and counting the images.
+* The 32×32 caches carry a version number; a cache built from the old archive is detected and rebuilt.
+
+## N19. Colab packages
+* `torchattacks` was removed: it is never imported, and its metadata pins `requests~=2.25.1`, which conflicts
+  with the `requests` version Colab's own packages require (the v1 install-cell conflict).
+* `imagecorruptions` was removed (N13).
+* On Colab only AutoAttack is installed, pinned to commit a3922004 and with `--no-deps`, so no preinstalled
+  package (torch, numpy, …) is changed (`requirements-colab.txt`). CLAUDE.md §2.3 lists the extras; the two
+  removals are deviations from that list.
+
+## N20. Results storage: local disk + sync (instead of writing to Google Drive directly)
+* Training writes to the local VM disk (`/content/out`). `src/storage.py` uploads new or changed result files to
+  persistent storage at most every 10 minutes during training and after every step, and restores them in a new
+  session. Checkpoints and corruption arrays are fetched only when a step needs them.
+* Preferred backend: a private Hugging Face dataset repository (free account, `HF_TOKEN` Colab secret). Fallback:
+  a Google Drive folder, chosen automatically when Hugging Face is not configured or fails.
+* At most `OUT_SYNC_INTERVAL` (10 minutes) of training is lost on a disconnect; `last.pt` is still written every
+  epoch locally. The Hugging Face history is squashed after each run so superseded checkpoints do not
+  accumulate.
+* This changes only where files are kept, not any result; CLAUDE.md §8.1's layout is unchanged inside OUT.

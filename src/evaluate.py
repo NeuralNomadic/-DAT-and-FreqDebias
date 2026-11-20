@@ -166,7 +166,8 @@ class Evaluator:
             for atk in AA_ATTACKS:
                 key = f"aa_{atk}"
                 if key not in self.flags:
-                    adv = AutoAttack(self.model, norm="Linf", eps=EPS, version="standard", verbose=True)
+                    adv = AutoAttack(self.model, norm="Linf", eps=EPS, version="standard", verbose=True,
+                                     device=str(self.device))
                     adv.attacks_to_run = [atk]                 # standard-version attack, run alone -> standalone acc
                     x_adv = adv.run_standard_evaluation(x, y, bs=self.args.aa_bs)
                     with torch.no_grad():

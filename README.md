@@ -10,20 +10,27 @@ configs/      _defaults.yaml (shared, never per-method) + E0…E6, A1…A6
 src/          data, make_split, corruptions, models, attacks, fourier, fomixup, precompute_fomixup, aag,
               methods/ (standard, pgd_at, trades, base_at, fd, dat), train, evaluate, aggregate, make_grids
 tests/        required tests (CLAUDE.md §11)
-notebooks/    colab_runner.ipynb
+notebooks/    colab_runner_v2.ipynb   (use this one; colab_runner.ipynb is the old v1, kept for reference)
 ```
 
 ## Colab (recommended)
-Open `notebooks/colab_runner.ipynb` in Google Colab with a GPU runtime, set `GITHUB_REPO` in cell 5 (and a
-`GITHUB_TOKEN` Colab Secret if the repo is private), run the setup cells, then one cell per run. Everything
-is written to `OUT = /content/drive/MyDrive/gtsrb_freq_robust` and is resumable (`--resume`).
+1. Colab → File → Open notebook → GitHub → `NeuralNomadic/-DAT-and-FreqDebias` → `notebooks/colab_runner_v2.ipynb`.
+2. Runtime → Change runtime type → T4 GPU.
+3. Optional but recommended: a free Hugging Face account and a **Write** access token stored as the Colab secret
+   `HF_TOKEN`. Results then go to a private Hugging Face dataset; without it the notebook falls back to Google
+   Drive automatically.
+4. Run cells 1–6 (settings, GPU, code, storage, data, helpers), then one run cell at a time.
+
+Training writes to the local VM disk (`/content/out`); `src/storage.py` syncs results to storage every
+10 minutes and after every step. After a disconnect, run cells 1–6 again and re-run the step you were on: it
+resumes from the last checkpoint (`--resume`).
 
 Dependency order: `E0_standard` → `src.precompute_fomixup` → E4 / E5 / A1–A4.
 
 ## Local
 ```bash
 pip install -r requirements.txt          # torch/torchvision: use what is installed (Colab: preinstalled)
-python -m pytest tests -q                # all tests must pass before any GPU run (CPU, ~5 min)
+python -m pytest tests -q                # all tests must pass before any GPU run (CPU, ~12 min)
 python -m src.make_split --data DATA --out OUT
 python -m src.train    --config configs/E0_standard.yaml --seed 0 --data DATA --out OUT --resume
 python -m src.evaluate --exp E0_standard --seed 0 --data DATA --out OUT
@@ -31,6 +38,7 @@ python -m src.precompute_fomixup --data DATA --out OUT
 python -m src.aggregate --out OUT
 ```
 Every script accepts `--smoke` (CPU, 1 epoch, 2 batches, synthetic data if GTSRB is absent).
+Optional sync outside Colab: set `OUT_SYNC=hf:<user>/<repo>` (with `HF_TOKEN`) or `OUT_SYNC=dir:<folder>`.
 
 ## Results
 `OUT/runs/<EXP>/seed<k>/` holds `config.yaml`, `train_log.csv`, `checkpoints/{last,best}.pt`, `metrics.json`,
@@ -46,5 +54,7 @@ and figures (`fig_eps_curve.png`, `fig_corruption_severity.png`, `fig_train_curv
   frequency debiasing*, CVPR 2025. Fo-Mixup (`src/fomixup.py`) is implemented from the paper as specified in
   `CLAUDE.md` §6 (no official code).
 * PGD-AT: Madry et al., ICLR 2018. TRADES: Zhang et al., ICML 2019. AutoAttack: Croce & Hein, ICML 2020
-  (`autoattack` package). Corruptions: Hendrycks & Dietterich, ICLR 2019 (`imagecorruptions` package).
-* Dataset: GTSRB, Stallkamp et al., 2012 (via `torchvision.datasets.GTSRB`).
+  (`autoattack` package). Corruptions: Hendrycks & Dietterich, ICLR 2019 (formulas and constants of the
+  `imagecorruptions` package, reimplemented in `src/corruptions.py`; NOTES.md N13).
+* Dataset: GTSRB, Stallkamp et al., 2012 — official final training and test archives from the GTSRB server
+  (NOTES.md N18).

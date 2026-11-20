@@ -7,6 +7,7 @@ import csv
 import glob
 import json
 import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -212,6 +213,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
+    try:   # tables contain non-ASCII (CW∞, ±); never crash on a non-UTF-8 console
+        sys.stdout.reconfigure(errors="replace")
+    except AttributeError:
+        pass
     rows = load_all(args.out)
     res = os.path.join(args.out, "results")
     os.makedirs(res, exist_ok=True)
