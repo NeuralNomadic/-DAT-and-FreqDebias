@@ -55,6 +55,14 @@ def gtsrb_present(root: str) -> bool:
         and os.path.isfile(test_gt_csv(root))
 
 
+def have_real_data(root: str, out: str) -> bool:
+    """True when real GTSRB can be used without a download: the split files exist and either the 32x32 caches
+    (restored from storage) or the raw images are present. --smoke runs fall back to synthetic data otherwise."""
+    split_ok = all(os.path.exists(os.path.join(out, "split", n)) for n in ("train.txt", "val.txt", "stats.json"))
+    caches = all(os.path.exists(os.path.join(out, "data_cache", f"{s}32.pt")) for s in ("train", "test"))
+    return split_ok and (caches or gtsrb_present(root))
+
+
 def download_gtsrb(root: str, split: str):
     """Download + extract the official archives for `split` into `root` (skipped when already present)."""
     from torchvision.datasets.utils import download_and_extract_archive

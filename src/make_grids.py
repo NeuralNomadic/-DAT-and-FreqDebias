@@ -6,7 +6,7 @@ import torch
 
 from .aag import AmplitudeGenerator
 from .common import get_device
-from .data import gtsrb_present, load_stats, load_train_val, synthetic_train_val
+from .data import have_real_data, load_stats, load_train_val, synthetic_train_val
 from .fomixup import band_mask, fomixup
 from .fourier import fft2_dat, ifft2_dat
 from .models import build_model
@@ -95,7 +95,7 @@ def main(argv=None):
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args(argv)
     device = get_device(force_cpu=args.smoke)
-    if args.smoke and not gtsrb_present(args.data):
+    if args.smoke and not have_real_data(args.data, args.out):
         ds, _, stats = synthetic_train_val()
         mean, std = stats["mean"], stats["std"]
     else:

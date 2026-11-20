@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from .common import fp32_ctx, get_device, atomic_save
-from .data import gtsrb_present, load_stats, load_train_val, synthetic_train_val
+from .data import have_real_data, load_stats, load_train_val, synthetic_train_val
 from .fomixup import K_CLUSTERS, T_KEEP, band_filtered_image, band_mask, cluster_segments
 from .fourier import fft2_shift
 from .models import build_model
@@ -68,7 +68,7 @@ def main(argv=None):
     ap.add_argument("--cpu", action="store_true")
     args = ap.parse_args(argv)
     device = get_device(force_cpu=args.cpu or args.smoke)
-    if args.smoke and not gtsrb_present(args.data):
+    if args.smoke and not have_real_data(args.data, args.out):
         train_ds, _, stats = synthetic_train_val()
         mean, std = stats["mean"], stats["std"]
     else:

@@ -16,7 +16,7 @@ from . import corruptions as corr
 from .attacks import fgsm, patch_attack, pgd
 from .common import env_info, fp32_ctx, get_device, read_json, run_dir, set_seed, write_json
 from .storage import get_syncer, rel_to_out
-from .data import (CLASS_NAMES, NUM_CLASSES, SAFETY_CLASSES, gtsrb_present, load_stats, load_test, synthetic_test)
+from .data import (CLASS_NAMES, NUM_CLASSES, SAFETY_CLASSES, have_real_data, load_stats, load_test, synthetic_test)
 from .metrics import accuracy, correct_flags, dataset_tensors
 from .models import build_model
 
@@ -47,7 +47,7 @@ class Evaluator:
             raise FileNotFoundError(f"{ck_path} not found locally or in storage: train {args.exp} seed {args.seed} first")
         ck = torch.load(ck_path, map_location="cpu", weights_only=False)
         self.cfg = ck["cfg"]
-        if args.smoke and not gtsrb_present(args.data):
+        if args.smoke and not have_real_data(args.data, args.out):
             mean, std = [0.5] * 3, [0.25] * 3
             ds = synthetic_test(64)
         else:

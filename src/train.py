@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from .attacks import pgd
 from .common import (atomic_save, env_info, fp32_ctx, get_device, load_config, rng_state, run_dir, save_yaml,
                      set_rng_state, set_seed, write_json)
-from .data import gtsrb_present, load_stats, load_train_val, synthetic_train_val
+from .data import have_real_data, load_stats, load_train_val, synthetic_train_val
 from .metrics import accuracy, correct_flags, dataset_tensors
 from .methods import build_method, method_needs_partner
 from .models import build_model
@@ -133,7 +133,7 @@ def main(argv=None):
 
     # ---------------- data ----------------
     with_partner = method_needs_partner(cfg)
-    if smoke and not gtsrb_present(args.data):
+    if smoke and not have_real_data(args.data, args.out):
         train_ds, val_ds, stats = synthetic_train_val(with_partner)
         mean, std = stats["mean"], stats["std"]
     else:
