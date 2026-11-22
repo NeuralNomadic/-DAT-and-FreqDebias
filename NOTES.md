@@ -150,3 +150,17 @@ paper-vs-code difference resolved in favour of the official code, §5.7).
   epoch locally. The Hugging Face history is squashed after each run so superseded checkpoints do not
   accumulate.
 * This changes only where files are kept, not any result; CLAUDE.md §8.1's layout is unchanged inside OUT.
+
+## N21. Observation at Milestone 1: E0 keeps about 10-17% robust accuracy at ε = 8/255
+* E0 seed 0 (T4, 2026-11-22): clean 99.32, FGSM 60.51, PGD-20 17.09, PGD-100 14.40, CW∞ 14.71,
+  AutoAttack 10.35 (n = 2,000; APGD-CE 12.50, APGD-T 10.55, FAB-T 11.25, Square 25.70). ε sweep:
+  75.64 / 46.23 / 17.14 / 6.20 / 2.26 at ε = 2 / 4 / 8 / 12 / 16 (/255).
+* CLAUDE.md §12 expects "PGD-20 near 0%". The value is above that. This is recorded as a result; no setting
+  was changed for it.
+* It does not look like gradient masking: all §7.1 checks pass, the margin-based attacks (CW∞, APGD-T, FAB-T)
+  agree with CE-PGD, the black-box Square attack is much weaker than the white-box attacks, and accuracy goes
+  to about 2% at ε = 16/255. The attack code was re-read: float32, eval mode, BN-A, projection then clamp.
+* A likely reason is that many GTSRB images are very dark: for pixels near 0, the [0, 1] clamp removes half of
+  the ε-ball, so the effective budget is smaller than on CIFAR-10. This has not been tested.
+* Consequence for the thesis: the robust accuracies of E1-E6 should be read against E0's 10.35% AutoAttack
+  baseline, not against 0%.
