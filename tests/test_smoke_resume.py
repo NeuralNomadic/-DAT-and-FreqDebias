@@ -75,3 +75,16 @@ def test_evaluate_precompute_grids_aggregate_smoke(tmp_out, tmp_data):
     assert not os.path.exists(os.path.join(tmp_out, "data_cache", "gtsrb_c")), "smoke must not touch the real cache"
     tmp_out = os.path.join(tmp_out, ".smoke")
     assert os.path.exists(os.path.join(tmp_out, "figures", "corruptions", "fog.png"))
+
+
+def test_set_rng_state_accepts_moved_or_retyped_state():
+    """Regression (Colab, 2026-11-23): torch.load(map_location='cuda') returned the saved RNG state as a
+    non-CPU tensor and torch.set_rng_state raised 'RNG state must be a torch.ByteTensor'. Without a GPU the
+    same error path is reproduced with a state of the wrong dtype."""
+    import torch
+    from src.common import rng_state, set_rng_state
+    st = rng_state()
+    expected = torch.rand(5)
+    st["torch"] = st["torch"].to(torch.int64)          # not a ByteTensor any more
+    set_rng_state(st)
+    assert torch.equal(torch.rand(5), expected)

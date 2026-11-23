@@ -112,11 +112,16 @@ def rng_state() -> dict:
 
 
 def set_rng_state(st: dict):
+    """Restore RNG states. torch.load(map_location='cuda') moves the saved ByteTensors to the GPU, but
+    torch.set_rng_state / torch.cuda.set_rng_state_all only accept CPU ByteTensors, hence the .cpu()."""
     random.setstate(st["python"])
     np.random.set_state(st["numpy"])
-    torch.set_rng_state(st["torch"])
+    torch.set_rng_state(torch.as_tensor(st["torch"]).cpu().to(torch.uint8))
     if "cuda" in st and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(st["cuda"])
+        cuda_states = [torch.as_tensor(s).cpu().to(torch.uint8) for s in st["cuda"]]
+        n = min(len(cuda_states), torch.cuda.device_count())   # tolerate a different GPU count on resume
+        for i in range(n):
+            torch.cuda.set_rng_state(cuda_states[i], device=i)
 
 
 def read_json(path, default=None):
