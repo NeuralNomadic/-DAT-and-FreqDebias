@@ -30,8 +30,8 @@ def _save_grid(rows, col_titles, path, title):
             ax.set_xticks([]); ax.set_yticks([])
             if r == 0:
                 ax.set_title(col_titles[c], fontsize=8)
-    fig.suptitle(title)
-    fig.tight_layout()
+    fig.suptitle(title, y=1.0)
+    fig.tight_layout(rect=(0, 0, 1, 0.985))   # keep the title clear of the column labels
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -47,10 +47,15 @@ def _pick(ds, n=16):
             seen.add(c); idx.append(i)
         if len(idx) == n:
             break
+    # Partner = a random same-class image, as in training (data.py, §5.6 step 1), with a fixed seed so the grid is
+    # reproducible. (Taking the next image of the class would almost always pick a photo of the same physical
+    # sign from the same track, which makes the mix look much weaker than it is during training.)
+    g = torch.Generator().manual_seed(1234)
     partners = []
     for i in idx:
         pool = ds.class_to_indices[int(ds.labels[i])]
-        partners.append(int(pool[(pool != i).nonzero().flatten()[0]] if len(pool) > 1 else i))
+        pool = pool[pool != i] if len(pool) > 1 else pool
+        partners.append(int(pool[torch.randint(len(pool), (1,), generator=g)]))
     return torch.tensor(idx), torch.tensor(partners)
 
 
@@ -64,10 +69,11 @@ def fomixup_grid(out, ds, masks, device):
     z = masks["top_clusters"][idx][:, 0].to(device)
     B = band_mask(sc, z)
     rows = []
-    cols = [x] + [fomixup(x, xj, B, xi=xi, p=torch.ones_like(x)) for xi in (0.25, 0.5, 0.75)] + [B]
+    cols = [x, xj] + [fomixup(x, xj, B, xi=xi, p=torch.ones_like(x)) for xi in (0.25, 0.5, 0.75)] + [B]
     for r in range(len(idx)):
         rows.append([c[r] for c in cols])
-    _save_grid(rows, ["original", "xi=0.25", "xi=0.5", "xi=0.75", "mask B"],
+    # mask B is shown in fftshift layout (DC at the centre); white = B = amplitude of x kept, black = mixed (Eq. 1)
+    _save_grid(rows, ["original", "partner x_j", "xi=0.25", "xi=0.5", "xi=0.75", "B (white=kept)"],
                os.path.join(out, "figures", "fomixup_grid.png"), "Fo-Mixup (phase of x kept)")
 
 
