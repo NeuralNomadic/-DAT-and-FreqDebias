@@ -164,3 +164,15 @@ paper-vs-code difference resolved in favour of the official code, §5.7).
   the ε-ball, so the effective budget is smaller than on CIFAR-10. This has not been tested.
 * Consequence for the thesis: the robust accuracies of E1-E6 should be read against E0's 10.35% AutoAttack
   baseline, not against 0%.
+
+## N22. Decisions at Milestones 2-3: 60 epochs and float32 training attacks for every run
+* **Epochs.** The student kept the 60-epoch schedule (LR ×0.1 at 40 and 50) for all experiments, for the Colab
+  compute budget (on a T4, one adversarial run plus its evaluation takes about 3-4 h for E3 and more for E5/E6).
+  E0, E3 and E5 (seed 0) were trained with it before the decision, so all runs share one schedule.
+  The §4.3 check (is E3's validation PGD-20 still clearly rising at epoch 50?) has not yet been reviewed.
+  E3's best epoch is 54, just after the second LR drop. If the curve shows a clear rise at epoch 50, this is
+  reported as a limitation of the study rather than changed.
+* **Attack precision.** The attacks used during training (EAEG, PGD-10, TRADES inner maximisation) run in
+  float32 with autocast disabled, like evaluation. Only the outer training step uses fp16 autocast (§4.3).
+  Running the training attacks in fp16 was considered for speed (~1.5-2× estimated) but not adopted, because E3
+  and E5 had already been trained in float32 and every method must use the same setup.
