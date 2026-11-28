@@ -1,4 +1,4 @@
-"""Visual checks (CLAUDE.md §6.5): fomixup_grid.png and dat_grid.png under OUT/figures/."""
+"""Visual checks (CLAUDE.md §6.5, §14): fomixup_grid.png, dat_grid.png and colour_aware_grid.png under OUT/figures/."""
 import argparse
 import os
 
@@ -7,7 +7,8 @@ import torch
 from .aag import AmplitudeGenerator
 from .common import get_device
 from .data import have_real_data, load_stats, load_train_val, synthetic_train_val
-from .fomixup import band_mask, fomixup
+from .color import rgb_to_ycbcr
+from .fomixup import band_mask, fomixup, fomixup_color
 from .fourier import fft2_dat, ifft2_dat
 from .models import build_model
 from .storage import get_syncer, rel_to_out
@@ -93,11 +94,39 @@ def dat_grid(out, ds, model, device, generator=None):
                os.path.join(out, "figures", "dat_grid.png"), "DAT amplitude mix (phase kept)")
 
 
+@torch.no_grad()
+def colour_aware_grid(out, ds, masks, device, xi=0.75, lam=0.75):
+    """§14 visual check: per sign, the RGB mix used by E5/E6 next to the colour-aware (YCbCr, alpha = 1) mix.
+    Columns: original | partner | Fo-Mixup RGB | Fo-Mixup CA | DAT-style RGB | DAT-style CA | B.
+    The DAT-style columns mix in the partner's amplitude (no trained generator needed), with the same function
+    E6-CA uses in training. Expected: in the CA columns the sign keeps its red/blue/yellow colour."""
+    from .methods.dat import color_amplitude_mix
+    idx, pidx = _pick(ds)
+    x = ds.imgs[idx].to(device).float() / 255.0
+    xj = ds.imgs[pidx].to(device).float() / 255.0
+    B = band_mask(masks["seg_cluster"][idx].to(device), masks["top_clusters"][idx][:, 0].to(device))
+    ones = torch.ones_like(x)
+    fm_rgb = fomixup(x, xj, B, xi=xi, p=ones)
+    fm_ca = fomixup_color(x, xj, B, xi=xi, p=ones, chroma_protect=1.0)
+    lam_t = torch.full((len(idx), 1, 1, 1), lam, device=device)
+    A, P = fft2_dat(x)
+    dat_rgb = ifft2_dat(lam_t * fft2_dat(xj)[0] + (1 - lam_t) * A, P)
+    ycc = rgb_to_ycbcr(x)
+    Ay, Py = fft2_dat(ycc)
+    dat_ca = color_amplitude_mix(ycc, Ay, Py, fft2_dat(rgb_to_ycbcr(xj))[0][:, :1], lam_t, 1.0)
+    cols = [x, xj, fm_rgb, fm_ca, dat_rgb, dat_ca, B]
+    rows = [[c[r] for c in cols] for r in range(len(idx))]
+    _save_grid(rows, ["original", "partner", "Fo-Mixup RGB", "Fo-Mixup CA", "DAT-style RGB", "DAT-style CA",
+                      "B (white=kept)"],
+               os.path.join(out, "figures", "colour_aware_grid.png"),
+               f"RGB vs colour-aware (YCbCr, Y only) mixing; Fo-Mixup xi={xi}, DAT-style lam={lam}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--which", choices=["fomixup", "dat", "both"], default="both")
+    ap.add_argument("--which", choices=["fomixup", "dat", "both", "ca"], default="both")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args(argv)
     device = get_device(force_cpu=args.smoke)
@@ -111,6 +140,14 @@ def main(argv=None):
         mp = os.path.join(args.out, "data_cache", "fomixup_masks.pt")
         if os.path.exists(mp):
             fomixup_grid(args.out, ds, torch.load(mp, weights_only=False), device)
+        else:
+            print("no fomixup_masks.pt yet; run src.precompute_fomixup first")
+    if args.which == "ca":
+        mp = os.path.join(args.out, "data_cache", "fomixup_masks.pt")
+        get_syncer(args.out).ensure(rel_to_out(args.out, mp))
+        if os.path.exists(mp):
+            colour_aware_grid(args.out, ds, torch.load(mp, weights_only=False), device)
+            print("saved", os.path.join(args.out, "figures", "colour_aware_grid.png"))
         else:
             print("no fomixup_masks.pt yet; run src.precompute_fomixup first")
     if args.which in ("dat", "both"):

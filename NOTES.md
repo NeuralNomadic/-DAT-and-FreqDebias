@@ -176,3 +176,29 @@ paper-vs-code difference resolved in favour of the official code, §5.7).
   float32 with autocast disabled, like evaluation. Only the outer training step uses fp16 autocast (§4.3).
   Running the training attacks in fp16 was considered for speed (~1.5-2× estimated) but not adopted, because E3
   and E5 had already been trained in float32 and every method must use the same setup.
+
+## N23. Colour-aware frequency mixing (CLAUDE.md §14, student extension 2026-11-28)
+* **Colour space.** ITU-R BT.601 full-range YCbCr (the JPEG convention), affine and exactly invertible
+  (`src/color.py`); the inverse matrix is computed from the forward one. All conversions are float32, like the FFTs.
+* **α knob.** α = `chroma_protect`: Y is always mixed fully; Cb and Cr are mixed with strength (1 − α) (Fo-Mixup:
+  ξ and the Eq. 2 noise are scaled per channel; DAT: λ is scaled per channel). This differs from the original
+  plan, which defined α = 0 as "the original RGB scrambling". Amplitude mixing is non-linear (it mixes |F|, not F),
+  so mixing in YCbCr with α = 0 is not the same as mixing in RGB; an exact interpolation would need both pipelines
+  and, for DAT, a 3-channel generator even at α = 1. The original RGB method therefore stays E5/E6 itself, and a
+  trade-off curve uses E5/E6 (RGB) plus CA runs at chosen α values.
+* **Fo-Mixup masks.** E5-CA reuses the per-image band masks selected by `precompute_fomixup.py` from the RGB
+  spectrum with the frozen E0 model; they are not recomputed on Y. This keeps E5-CA identical to E5 except for the
+  colour space of the mix.
+* **DAT generator at α = 1.** The output layer produces 1 × 32 × 32 (the Y amplitude) instead of 3 × 32 × 32;
+  the hidden layers, conditioning (classifier logits of the clean image), noise and optimiser are unchanged.
+  Chroma is passed through exactly, then the code's post-mix crop is applied as in E6.
+* **Clipping.** The mixed Y (and, for α < 1, Cb/Cr) is reconstructed by the inverse FFT, converted to RGB and
+  clipped to [0, 1]. Where clipping is active, the output's chroma can differ slightly from the input's; the tests
+  check exact chroma preservation on unclipped pixels.
+* **Phase 0 statistics.** Group accuracies from `eval_flags.pt` (`best.pt`, full test set). Differences between
+  runs use a paired bootstrap over test images (2,000 resamples, seed 0); the colour gap resamples the red+blue
+  and white image sets separately. The white group has only 360 test images and yellow is one class, so their
+  intervals are wide. Colour groups also differ in class mix and difficulty; comparing each method with E3 (same
+  images) removes most of that, but not all.
+* **Novelty.** Not claimed (CLAUDE.md §13). Frequency-domain augmentation in other colour spaces may exist in the
+  literature; the student checks before any claim.

@@ -1,0 +1,11 @@
+# Identical to its parent config except the two §14 keys at the end (fairness: same base, schedule, BN split).
+exp: E6_dat_ca            # §14 colour-aware DAT (E6-CA): E6 with a Y-only generator and mix
+method: dat
+dual_bn: true
+select_metric: pgd20
+generator: learned        # AAG generator (src/aag.py) with its own SGD
+gen_lr: 0.1               # [paper: DAT]
+js_weight: 2.0            # omega = 2 [paper: DAT]
+dat_post_crop: true       # official code applies a random crop (+flip, not used here) after the amplitude mix
+color_space: ycbcr        # §14 colour-aware variant: mix the amplitude in YCbCr instead of RGB
+chroma_protect: 1.0       # §14 alpha: 1 = colour (Cb, Cr) untouched, only the luminance spectrum is mixed

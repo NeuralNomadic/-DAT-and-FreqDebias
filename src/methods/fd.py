@@ -10,12 +10,13 @@ Per batch (x, y) with same-class partner x_j and the precomputed Fo-Mixup masks:
      L_att = JS( softmax(CAM(x)/tau), softmax(CAM(x_t)/tau) ), CAM = W_y^T F(v) flattened to 16 values.
   E4: every L_AT(v) is replaced by CE(f(v), y) and no attacks are generated.
 Config switches: adversarial (E4 vs E5), band_mode ('ohem' | 'all' = A1 | 'uniform' = A2), delta (A3: 0),
-confidence_sampling (A4: false).
+confidence_sampling (A4: false), color_space ('rgb' = E5 | 'ycbcr' = E5-CA, CLAUDE.md §14) with chroma_protect
+(alpha in [0, 1], used only with 'ycbcr').
 """
 import torch
 import torch.nn.functional as F
 
-from ..fomixup import choose_masks, fomixup
+from ..fomixup import choose_masks, fomixup, fomixup_color
 from .base import Method, _kl_from_logits, js_div, l_at_per_sample
 
 
@@ -34,6 +35,10 @@ class FreqDebias(Method):
         self.conf_sampling = bool(cfg.get("confidence_sampling", True))
         self.keep_frac = float(cfg.get("confidence_keep", 0.5))         # [paper: FreqDebias lambda = 0.5]
         self.p_std = float(cfg.get("p_std", 0.1))                       # [adaptation] Eq. 2 noise
+        self.color_space = cfg.get("color_space", "rgb")                 # §14: 'rgb' (E5) | 'ycbcr' (E5-CA)
+        if self.color_space not in ("rgb", "ycbcr"):
+            raise ValueError(f"color_space must be 'rgb' or 'ycbcr', got {self.color_space!r}")
+        self.chroma_protect = float(cfg.get("chroma_protect", 1.0))      # §14 alpha (ycbcr only)
         masks = extra.get("fomixup_masks")
         if masks is None:
             raise RuntimeError("Fo-Mixup masks are required (run src.precompute_fomixup after E0)")
@@ -65,7 +70,10 @@ class FreqDebias(Method):
         x, y, idx, x_j = batch["x"], batch["y"], batch["idx"], batch["x_partner"]
         # 1. Fo-Mixup (float32 inside)
         mask = choose_masks(self.seg_cluster[idx], self.top_clusters[idx], self.band_mode)
-        x_t = fomixup(x, x_j, mask, p_std=self.p_std).detach()
+        if self.color_space == "ycbcr":                                   # §14 colour-aware (E5-CA)
+            x_t = fomixup_color(x, x_j, mask, p_std=self.p_std, chroma_protect=self.chroma_protect).detach()
+        else:
+            x_t = fomixup(x, x_j, mask, p_std=self.p_std).detach()
         # 2. confidence sampling
         keep = self._confidence_keep(x_t)
         x_tk, y_k = x_t[keep], y[keep]

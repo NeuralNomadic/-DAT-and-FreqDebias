@@ -450,3 +450,34 @@ At each stop, report: what was built, test results, any deviation from this file
 - Implement Fo-Mixup's Eq. 1 exactly as in Section 6.4; do not swap B and (1 − B).
 - Do not describe Arm A or any ablation as novel; the student will check the literature.
 - Comment every formula in the code with its equation number from this file or the paper, so the student can explain it in a defense.
+
+---
+
+## 14. Extension: colour-aware frequency mixing (student extension, added 2026-11-28)
+
+**Motivation.** E5 and E6 compute the FFT of each RGB channel and perturb each channel's amplitude independently. Colour is carried by the relation between R, G and B, so this also shifts colour; for traffic signs colour carries meaning (red = prohibition/warning, blue = mandatory). The variants below apply the same amplitude perturbation in YCbCr: Y (luminance) is perturbed as E5/E6 perturb each channel, Cb/Cr (chrominance) are kept. Do not describe this as novel (§13); the student checks the literature.
+
+### 14.1 Phase 0 — diagnosis (no training; decide before Phase 2)
+- Colour groups (verified against the official class names, `src/data.py::COLOUR_GROUPS`): red 0–5, 7–11, 13–31; blue 33–40; yellow 12; white 6, 32, 41, 42.
+- `src/colour_groups.py`: per-group clean and PGD-20 accuracy from the per-image results of `best.pt` (`eval_flags.pt`), and for E5/E6 the difference from E3 per group with a 95 % paired bootstrap interval (2,000 resamples, images resampled jointly), plus the colour gap = drop on red+blue − drop on white.
+- Proceed to Phases 1–3 only if E5 and/or E6 show a colour gap whose interval excludes 0 (colour-coded signs lose more). Otherwise reconsider.
+
+### 14.2 Phase 1 — method
+- `src/color.py`: RGB ↔ YCbCr (ITU-R BT.601 full range), differentiable, float32 (like all Fourier arithmetic, §4.3).
+- **E5-CA** (`fomixup_color`): Fo-Mixup Eq. 1–2 applied per YCbCr channel with strength w = (1, 1 − α, 1 − α) on ξ and on the Eq. 2 noise; channels with w = 0 pass through unchanged. Same band masks B as E5 (selected once from the RGB spectrum by §6.3).
+- **E6-CA**: the DAT mix applied in YCbCr. With α = 1 the generator outputs one channel (the Y amplitude) and only Y is mixed; with α < 1 it outputs three channels and λ is scaled per channel by w. Everything else (conditioning, generator optimiser, EAEG on x̂, JS consistency) as in §5.7.
+- **α = `chroma_protect`** ∈ [0, 1]: 1 = colour untouched (E5-CA/E6-CA), 0 = all three YCbCr channels perturbed. The per-RGB-channel original is E5/E6 itself (`color_space: rgb`); α = 0 in YCbCr is close to, but not identical with, RGB perturbation because amplitude mixing is non-linear (NOTES.md N23).
+
+### 14.3 Phase 2 — runs (seed 0)
+| ID | Config | Differs from parent only by |
+| --- | --- | --- |
+| E5-CA | `configs/E5_fd_at_ca.yaml` | `color_space: ycbcr`, `chroma_protect: 1.0` (parent E5) |
+| E6-CA | `configs/E6_dat_ca.yaml` | `color_space: ycbcr`, `chroma_protect: 1.0` (parent E6) |
+
+Same base, schedule, BN split, masks and evaluation as the parents (§13 fairness). An α sweep (e.g. 0, 0.5) is optional: copy a config and change `chroma_protect`.
+
+### 14.4 Phase 3 — evaluation
+- Full §7 evaluation of E5-CA and E6-CA.
+- `table_colour_aware`: overall metrics and the difference from the parent.
+- `table_colour_groups` / `table_colour_drop`: per colour group, and E5-CA vs E5, E6-CA vs E6 with paired bootstrap intervals.
+- Success condition: higher accuracy on the colour-coded groups (interval excludes 0) without losing overall robustness (AutoAttack, PGD-20 within noise of the parent). One seed: differences under ~1 point are noise.

@@ -26,6 +26,21 @@ NUM_CLASSES = 43
 # CLAUDE.md §7: Stop (14), Yield (13), No entry (17), speed limits (0,1,2,3,4,5,7,8).
 SAFETY_CLASSES = [14, 13, 17, 0, 1, 2, 3, 4, 5, 7, 8]
 
+# Dominant sign colour per class (colour-aware extension, CLAUDE.md §14, Phase 0), from the official class names:
+#   red    prohibitory (red ring) and warning (red triangle) signs, Yield, Stop, No entry
+#   blue   mandatory signs (Turn right/left ahead, Ahead only, Go straight or right/left, Keep right/left,
+#          Roundabout mandatory)
+#   yellow Priority road
+#   white  end-of-restriction signs (white/grey with a black diagonal)
+# Checked against CLASS_NAMES by tests/test_colour_aware.py.
+COLOUR_GROUPS = {
+    "red": [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+            29, 30, 31],
+    "blue": [33, 34, 35, 36, 37, 38, 39, 40],
+    "yellow": [12],
+    "white": [6, 32, 41, 42],
+}
+
 
 # ----------------------------------------------------------------------------------------------
 # Raw dataset access

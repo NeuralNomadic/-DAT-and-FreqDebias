@@ -1,0 +1,15 @@
+# Identical to its parent config except the two §14 keys at the end (fairness: same base, schedule, BN split).
+exp: E5_fd_at_ca          # §14 colour-aware FreqDebias-AT (E5-CA): E5 with the mix applied to Y only
+method: fd
+dual_bn: true             # x, x' -> BN-A; x_tilde, x_tilde' -> BN-B [adaptation: matches DAT]
+adversarial: true
+select_metric: pgd20
+band_mode: ohem           # B from the image's 3 stored OHEM clusters (§6.3-6.4)
+delta: 0.1                # [paper: FreqDebias Eq. 13]
+tau: 4.0                  # [paper: FreqDebias Eq. 3]
+consistency_weight: 1.0
+confidence_sampling: true
+confidence_keep: 0.5      # lambda = 0.5 [paper: FreqDebias]
+p_std: 0.1                # [adaptation] Eq. 2 noise N(1, 0.1^2)
+color_space: ycbcr        # §14 colour-aware variant: mix the amplitude in YCbCr instead of RGB
+chroma_protect: 1.0       # §14 alpha: 1 = colour (Cb, Cr) untouched, only the luminance spectrum is mixed

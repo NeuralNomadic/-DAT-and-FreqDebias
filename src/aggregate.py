@@ -12,12 +12,16 @@ import sys
 import numpy as np
 import pandas as pd
 
-MAIN_ORDER = ["E0_standard", "E1_pgdat", "E2_trades", "E3_base", "E4_fd_clean", "E5_fd_at", "E6_dat"]
+# E0-E6 in the CLAUDE.md §8.4 order, then the §14 colour-aware variants (rows appear only once they exist)
+MAIN_ORDER = ["E0_standard", "E1_pgdat", "E2_trades", "E3_base", "E4_fd_clean", "E5_fd_at", "E6_dat",
+              "E5_fd_at_ca", "E6_dat_ca"]
 ABLATIONS = {"A1": "E5_fd_at", "A2": "E5_fd_at", "A3": "E5_fd_at", "A4": "E5_fd_at", "A5": "E6_dat", "A6": "E6_dat"}
+COLOUR_AWARE = {"E5_fd_at_ca": "E5_fd_at", "E6_dat_ca": "E6_dat"}                     # §14 variant -> parent
 PRETTY = {"E0_standard": "E0 Standard", "E1_pgdat": "E1 PGD-AT", "E2_trades": "E2 TRADES", "E3_base": "E3 Base-AT",
           "E4_fd_clean": "E4 FreqDebias-Clean", "E5_fd_at": "E5 FreqDebias-AT (Arm A)", "E6_dat": "E6 DAT (Arm B)",
           "A1": "A1 E5, B=0 (whole spectrum)", "A2": "A2 E5, uniform band", "A3": "A3 E5, delta=0",
-          "A4": "A4 E5, no confidence sampling", "A5": "A5 E6, single BN", "A6": "A6 E6, partner amplitude"}
+          "A4": "A4 E5, no confidence sampling", "A5": "A5 E6, single BN", "A6": "A6 E6, partner amplitude",
+          "E5_fd_at_ca": "E5-CA colour-aware FreqDebias-AT", "E6_dat_ca": "E6-CA colour-aware DAT"}
 CORR_KEYS = ["gaussian_noise", "gaussian_blur", "brightness", "contrast", "fog", "jpeg"]
 
 
@@ -146,11 +150,12 @@ def table_cost(rows, res):
         write_table(pd.DataFrame(recs), [], os.path.join(res, "table_cost"))
 
 
-def table_ablation(rows, res):
+def table_ablation(rows, res, mapping=None, name="table_ablation"):
+    """Each variant vs its parent's seed-0 run (ablations: §5.8; colour-aware variants: §14)."""
     recs = []
     cols = {"Clean": lambda m: m.get("clean"), "PGD-20": lambda m: m.get("pgd20"),
             "AutoAttack": lambda m: m.get("autoattack"), "Corruption mean": lambda m: m.get("corruption_mean")}
-    for exp, parent in ABLATIONS.items():
+    for exp, parent in (ABLATIONS if mapping is None else mapping).items():
         if not any(m.get("exp") == exp for m in rows):
             continue
         # compare with the parent's seed-0 run (ablations are seed 0 only)
@@ -163,7 +168,7 @@ def table_ablation(rows, res):
             rec[c + " Δ vs parent"] = (None, None, 0) if (v[0] is None or pv is None) else (v[0] - pv, 0.0, 1)
         recs.append(rec)
     if recs:
-        write_table(pd.DataFrame(recs), [], os.path.join(res, "table_ablation"))
+        write_table(pd.DataFrame(recs), [], os.path.join(res, name))
 
 
 def figures(rows, out, res):
@@ -228,6 +233,12 @@ def main(argv=None):
     table_safety(rows, res)
     table_cost(rows, res)
     table_ablation(rows, res)
+    table_ablation(rows, res, COLOUR_AWARE, "table_colour_aware")                    # §14 Phase 3, overall
+    try:                                                                              # §14 Phase 0/3, per colour
+        from .colour_groups import analyse
+        analyse(args.out, quiet=True)
+    except Exception as e:                                                            # never block the tables
+        print("colour-group tables skipped:", type(e).__name__, e)
     figures(rows, args.out, res)
     print(f"aggregated {len(rows)} runs ->", res)
     from .storage import get_syncer

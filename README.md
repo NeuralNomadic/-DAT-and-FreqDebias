@@ -27,6 +27,11 @@ resumes from the last checkpoint (`--resume`).
 
 Dependency order: `E0_standard` → `src.precompute_fomixup` → E4 / E5 / A1–A4.
 
+## Extension: colour-aware frequency mixing
+`CLAUDE.md` §14 and the last cells of the notebook: Phase 0 diagnosis (`python -m src.colour_groups --out OUT`,
+no GPU), then E5-CA / E6-CA (`configs/E5_fd_at_ca.yaml`, `configs/E6_dat_ca.yaml`), which mix only the luminance
+(Y) spectrum in YCbCr and keep the sign's colour. Details and every choice made: `NOTES.md` N23.
+
 ## Local
 ```bash
 pip install -r requirements.txt          # torch/torchvision: use what is installed (Colab: preinstalled)

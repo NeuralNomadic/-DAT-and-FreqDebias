@@ -5,6 +5,7 @@ All operations in float32 (autocast disabled inside the FFT helpers).
 import torch
 import torch.nn.functional as F
 
+from .color import chroma_weights, rgb_to_ycbcr, ycbcr_to_rgb
 from .common import fp32_ctx
 from .fourier import (N, N_SEGMENTS, fft2_shift, ifft2_shift_complex, segment_index, segment_counts,
                       symmetrize_field)
@@ -123,6 +124,47 @@ def fomixup(x_i, x_j, mask, xi=None, p_std=0.1, p=None, return_imag=False):
         A_hat = F.relu(p * A_hat)                                                  # Eq. 2
         z = ifft2_shift_complex(A_hat, P_i)
         x_t = torch.clamp(z.real, 0.0, 1.0)
+        if return_imag:
+            return x_t, z.imag.abs().max()
+        return x_t
+
+
+def fomixup_color(x_i, x_j, mask, xi=None, p_std=0.1, p=None, chroma_protect=1.0, return_imag=False):
+    """Colour-aware Fo-Mixup (CLAUDE.md §14, E5-CA): Eq. 1-2 applied in YCbCr instead of RGB.
+
+        Y_i, Cb_i, Cr_i = YCbCr(x_i);  same for x_j                          (src/color.py, BT.601 full range)
+        per YCbCr channel c with strength w_c = (1, 1 - alpha, 1 - alpha):
+            A_hat_c = A_i,c * B + ((1 - w_c xi) A_i,c + w_c xi A_j,c) * (1 - B)    Eq. 1, xi scaled by w_c
+            A_hat_c = max(0, p_c * A_hat_c),  p_c = 1 + w_c (p - 1)                Eq. 2, noise scaled by w_c
+        channels with w_c = 0 are passed through unchanged (exactly)
+        x_t = clip_[0,1]( RGB( real( ifft2( ifftshift( A_hat * exp(i P_i) ) ) ) ) )
+
+    alpha = chroma_protect: 1 -> only the luminance spectrum is mixed and the sign's colour is kept;
+    0 -> all three YCbCr channels are mixed. The band mask B, xi and p are the same objects as in fomixup(), so
+    E5-CA differs from E5 only in the colour space the mix is applied in. The masks were selected from the RGB
+    spectrum (precompute_fomixup.py) and are reused unchanged (NOTES.md N23).
+    """
+    with fp32_ctx(x_i.device):
+        Bn = x_i.shape[0]
+        w = chroma_weights(chroma_protect, x_i.device)                                 # 1 x 3 x 1 x 1
+        if xi is None:
+            xi = torch.rand(Bn, 1, 1, 1, device=x_i.device)
+        elif not torch.is_tensor(xi):
+            xi = torch.full((Bn, 1, 1, 1), float(xi), device=x_i.device)
+        y_i, y_j = rgb_to_ycbcr(x_i), rgb_to_ycbcr(x_j)
+        A_i, P_i = fft2_shift(y_i)
+        A_j, _ = fft2_shift(y_j)
+        if p is None:
+            p = symmetrize_field(1.0 + p_std * torch.randn_like(A_i))
+        xi_c = xi * w
+        p_c = 1.0 + w * (p - 1.0)
+        mask = mask.float()
+        A_hat = A_i * mask + ((1.0 - xi_c) * A_i + xi_c * A_j) * (1.0 - mask)        # Eq. 1 per YCbCr channel
+        A_hat = F.relu(p_c * A_hat)                                                   # Eq. 2
+        z = ifft2_shift_complex(A_hat, P_i)
+        untouched = (w == 0).view(1, 3, 1, 1)
+        y_t = torch.where(untouched, y_i, z.real)                                     # exact pass-through
+        x_t = torch.clamp(ycbcr_to_rgb(y_t), 0.0, 1.0)
         if return_imag:
             return x_t, z.imag.abs().max()
         return x_t
