@@ -202,3 +202,19 @@ paper-vs-code difference resolved in favour of the official code, §5.7).
   images) removes most of that, but not all.
 * **Novelty.** Not claimed (CLAUDE.md §13). Frequency-domain augmentation in other colour spaces may exist in the
   literature; the student checks before any claim.
+
+## N24. Phase 0 decision rule tightened (2026-11-28)
+* **What was wrong.** The first version of `src/colour_groups.py` called the colour-aware motivation supported
+  whenever the colour gap (Δ red+blue − Δ white) was below 0 with its interval excluding 0, and labelled that
+  "colour-coded signs lose MORE". A negative gap can also come from white signs *gaining* more than colour-coded
+  signs, with no loss on colour-coded signs at all.
+* **What happened.** GTSRB, seed 0, E6 vs E3: red +1.95 clean / +1.53 PGD-20, blue −0.45 / −0.96, white +8.06 /
+  +3.33. The colour-coded signs gained (about +1.6 clean together), white gained more, so the gap was −6.48 and
+  the old rule said "supported". E5 vs E3 had a positive gap (white −7.78 clean). Neither arm shows a real loss on
+  colour-coded signs, apart from E6 on blue under PGD-20 (−0.96 [−1.69, −0.23]).
+* **New rule** (`colour_groups.verdict`): supported only if Δ red+blue < 0 (interval excludes 0) **and** the gap
+  < 0 (interval excludes 0). The table gains a "Δ red+blue" column. For the CA rows (E5-CA vs E5, E6-CA vs E6) the
+  verdict asks whether red+blue recovered (interval above 0). CLAUDE.md §14.1 updated to match.
+* **Consequence.** Under the new rule Phase 0 does not support the colour-aware variants on GTSRB at seed 0.
+  The largest per-group difference between the arms is on the white "End of …" signs (E5 −7.8, E6 +8.1 clean vs
+  E3; 4 classes, 360 images); whether it repeats across seeds is checked with Tier 3.

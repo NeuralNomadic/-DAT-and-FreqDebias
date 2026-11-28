@@ -459,8 +459,8 @@ At each stop, report: what was built, test results, any deviation from this file
 
 ### 14.1 Phase 0 — diagnosis (no training; decide before Phase 2)
 - Colour groups (verified against the official class names, `src/data.py::COLOUR_GROUPS`): red 0–5, 7–11, 13–31; blue 33–40; yellow 12; white 6, 32, 41, 42.
-- `src/colour_groups.py`: per-group clean and PGD-20 accuracy from the per-image results of `best.pt` (`eval_flags.pt`), and for E5/E6 the difference from E3 per group with a 95 % paired bootstrap interval (2,000 resamples, images resampled jointly), plus the colour gap = drop on red+blue − drop on white.
-- Proceed to Phases 1–3 only if E5 and/or E6 show a colour gap whose interval excludes 0 (colour-coded signs lose more). Otherwise reconsider.
+- `src/colour_groups.py`: per-group clean and PGD-20 accuracy from the per-image results of `best.pt` (`eval_flags.pt`), and for E5/E6 the difference from E3 per group with a 95 % paired bootstrap interval (2,000 resamples, images resampled jointly), the difference on red+blue together, and the colour gap = Δ red+blue − Δ white.
+- Proceed to Phases 1–3 only if, for E5 and/or E6, (1) the colour-coded signs actually drop (Δ red+blue < 0, interval excludes 0) **and** (2) the colour gap is < 0 with an interval that excludes 0. A negative gap caused by white signs gaining more is not support (NOTES.md N24). Otherwise reconsider.
 
 ### 14.2 Phase 1 — method
 - `src/color.py`: RGB ↔ YCbCr (ITU-R BT.601 full range), differentiable, float32 (like all Fourier arithmetic, §4.3).

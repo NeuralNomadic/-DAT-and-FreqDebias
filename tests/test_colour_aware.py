@@ -50,10 +50,37 @@ def test_colour_group_diagnosis_detects_a_planted_gap(tmp_path):
     group_rows, drop_rows = colour_groups.analyse(out, quiet=True)
     assert [r[0] for r in group_rows] == ["E3_base", "E5_fd_at", "E6_dat"]
     verdicts = {(r[0], r[2]): r[-1] for r in drop_rows}
-    assert verdicts[("E5_fd_at", "clean")].startswith("colour-coded signs lose MORE")
-    assert verdicts[("E6_dat", "clean")].startswith("no clear gap")
+    assert "SUPPORTED" in verdicts[("E5_fd_at", "clean")]
+    assert verdicts[("E6_dat", "clean")].startswith("no clear difference")
     for name in ("table_colour_groups", "table_colour_drop"):
         assert os.path.exists(os.path.join(out, "results", name + ".md"))
+
+
+def test_colour_group_diagnosis_white_gain_is_not_support(tmp_path):
+    """A negative gap caused by white signs GAINING more (no loss on red/blue) must not count as support."""
+    rng = np.random.default_rng(1)
+    groups = data.COLOUR_GROUPS
+    labels = np.concatenate([np.repeat(groups[g][0], n) for g, n in
+                             (("red", 3000), ("blue", 1500), ("yellow", 400), ("white", 400))])
+    white = np.isin(labels, groups["white"])
+    base = rng.random(len(labels)) < 0.7
+    better = base | (white & (rng.random(len(labels)) < 0.5))             # only white improves, a lot
+    out = _fake_out(tmp_path, labels, {"E3_base": (base, base), "E6_dat": (better, better)})
+    _, drop_rows = colour_groups.analyse(out, quiet=True)
+    v = {(r[0], r[2]): r[-1] for r in drop_rows}[("E6_dat", "clean")]
+    assert v.startswith("no drop on colour-coded signs") and "not supported" in v
+
+
+def test_verdict_rules():
+    V = colour_groups.verdict
+    # GTSRB E6 vs E3, seed 0, clean: red+blue gained ~+1.6, white +8.1 -> gap -6.5 but no colour-coded loss
+    assert "not supported" in V((1.58, 1.2, 1.9), (-6.48, -9.46, -3.58))
+    assert "SUPPORTED" in V((-2.0, -2.5, -1.5), (-3.0, -5.0, -1.0))
+    assert "not clearly more" in V((-2.0, -2.5, -1.5), (-1.0, -3.0, +1.0))
+    assert "fare better" in V((1.0, 0.5, 1.5), (8.0, 5.0, 11.0))
+    assert V((1.0, 0.5, 1.5), (0, -1, 1), colour_aware=True).startswith("colour-coded signs recover")
+    assert V((-1.0, -1.5, -0.5), (0, -1, 1), colour_aware=True).startswith("colour-coded signs get worse")
+    assert V((0.1, -0.5, 0.7), (0, -1, 1), colour_aware=True).startswith("no clear change")
 
 
 def test_colour_group_diagnosis_skips_smoke_sized_flags(tmp_path):

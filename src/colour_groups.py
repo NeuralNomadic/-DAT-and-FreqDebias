@@ -15,10 +15,15 @@ For every evaluated run (seed 0 by default) it reads the per-image results alrea
 Why paired: every method is evaluated on the same test images, so resampling images jointly (the same bootstrap
 indices for both runs) removes the image-difficulty noise that two independent accuracies would carry.
 
-Reading the result (Phase 0 decision): the motivation for colour-aware mixing is supported if, for E5 and/or E6,
-the drop on the colour-coded groups (red, blue) is clearly larger than on the achromatic group (white), i.e. the
-colour gap is negative and its interval excludes 0. Caveats printed with the table: the white group has only 360
-test images (wide intervals) and the yellow group is a single class.
+Reading the result (Phase 0 decision): the motivation for colour-aware mixing is that RGB amplitude mixing HURTS
+colour-coded signs. It is supported for E5 and/or E6 only if BOTH hold (see `verdict`):
+  1. the colour-coded signs (red + blue together) actually drop: Δ red+blue < 0 with an interval that excludes 0;
+  2. they drop more than the achromatic signs (white): colour gap < 0 with an interval that excludes 0.
+A negative gap alone is not enough: if red+blue GAIN accuracy but white gains even more, the gap is negative although
+nothing was lost on colour-coded signs (this happened for GTSRB E6 at seed 0, NOTES.md N24).
+For the colour-aware rows (E5-CA vs E5, E6-CA vs E6) the question is the reverse: did red+blue recover?
+Caveats printed with the table: the white group has only 360 test images (wide intervals) and the yellow group is a
+single class; the intervals reflect test-image noise only, not seed-to-seed variation.
 """
 import argparse
 import csv
@@ -80,6 +85,33 @@ def gap_bootstrap(a, b, masks, rng, n_boot=N_BOOT):
     return (dc.mean() - dw.mean()) * 100, np.percentile(boots, 2.5), np.percentile(boots, 97.5)
 
 
+def verdict(colour, gap, colour_aware=False):
+    """Phase 0 / Phase 3 decision from two (mean, lo, hi) triples, in percentage points:
+    colour = Δ on red+blue (method − reference), gap = Δ red+blue − Δ white.
+
+    Phase 0 (method = E5/E6, reference = E3): the colour-aware motivation needs a REAL drop on the colour-coded
+    signs (colour interval below 0) that is also larger than on white signs (gap interval below 0).
+    Phase 3 (method = E5-CA/E6-CA, reference = their parent): did the colour-coded signs recover (colour interval
+    above 0)?"""
+    _, c_lo, c_hi = colour
+    _, g_lo, g_hi = gap
+    if colour_aware:
+        if c_lo > 0:
+            return "colour-coded signs recover (CA helps)"
+        if c_hi < 0:
+            return "colour-coded signs get worse (CA hurts)"
+        return "no clear change on colour-coded signs"
+    if c_hi < 0 and g_hi < 0:
+        return "colour-coded signs drop, more than white (motivation SUPPORTED)"
+    if c_hi < 0:
+        return "colour-coded signs drop, but not clearly more than white (not supported)"
+    if g_hi < 0:
+        return "no drop on colour-coded signs; white gains more (not supported)"
+    if g_lo > 0:
+        return "colour-coded signs fare better than white (not supported)"
+    return "no clear difference (not supported)"
+
+
 def _md_table(header, rows):
     lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
     lines += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
@@ -133,7 +165,10 @@ def analyse(out, seed=0, quiet=False):
 
     # table 2: drops vs reference, paired bootstrap
     rng = np.random.default_rng(0)
-    header2 = ["Method", "vs", "metric"] + [f"Δ {g}" for g in GROUPS] + ["colour gap (red+blue − white)", "verdict"]
+    header2 = (["Method", "vs", "metric"] + [f"Δ {g}" for g in GROUPS]
+               + ["Δ red+blue", "colour gap (red+blue − white)", "verdict"])
+    colour_mask = masks["red"] | masks["blue"]
+    fmt = lambda t: f"{t[0]:+.2f} [{t[1]:+.2f}, {t[2]:+.2f}]"
     drop_rows = []
     for exp, ref in REFERENCE.items():
         if exp not in flags or ref not in flags:
@@ -142,22 +177,17 @@ def analyse(out, seed=0, quiet=False):
             a, b = flags[exp][m], flags[ref][m]
             row = [exp, ref, "clean" if m == "clean" else "PGD-20"]
             for g in GROUPS:
-                d, lo, hi = paired_bootstrap(a[masks[g]], b[masks[g]], rng)
-                row.append(f"{d:+.2f} [{lo:+.2f}, {hi:+.2f}]")
-            gap, lo, hi = gap_bootstrap(a, b, masks, rng)
-            row.append(f"{gap:+.2f} [{lo:+.2f}, {hi:+.2f}]")
-            if hi < 0:
-                verdict = "colour-coded signs lose MORE (gap supported)"
-            elif lo > 0:
-                verdict = "colour-coded signs lose LESS"
-            else:
-                verdict = "no clear gap (interval includes 0)"
-            row.append(verdict)
+                row.append(fmt(paired_bootstrap(a[masks[g]], b[masks[g]], rng)))
+            colour = paired_bootstrap(a[colour_mask], b[colour_mask], rng)
+            gap = gap_bootstrap(a, b, masks, rng)
+            row += [fmt(colour), fmt(gap), verdict(colour, gap, colour_aware=exp.endswith("_ca"))]
             drop_rows.append(row)
     note = ("Δ = accuracy of the method minus its reference, in percentage points, on the same test images, with a "
-            "95 % paired bootstrap interval (2,000 resamples). Colour gap < 0 means the colour-coded groups lose more "
-            f"than the white group. Caveats: the white group has only {n['white']} test images and yellow is a "
-            "single class (Priority road), so their intervals are wide; one seed only.")
+            "95 % paired bootstrap interval (2,000 resamples). Δ red+blue < 0 means the colour-coded signs actually "
+            "lose accuracy; colour gap < 0 means they fare worse than the white signs. The colour-aware motivation "
+            "needs BOTH intervals below 0; a negative gap with Δ red+blue ≥ 0 only means white gained more. "
+            f"Caveats: the white group has only {n['white']} test images and yellow is a single class (Priority "
+            "road), so their intervals are wide; intervals cover test-image noise only, one seed.")
     md2 = _write(res_dir, "table_colour_drop", header2, drop_rows, note) if drop_rows else ""
     if not quiet:
         print("=== accuracy per colour group (seed %d) ===" % seed)
